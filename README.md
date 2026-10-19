@@ -38,6 +38,10 @@ support.
 The imported portions remain covered by the MIT license and are attributed in
 [`NOTICE`](NOTICE). The adaptation is not an upstream endorsement.
 
+The shared Rust `android-transport` crate now owns the endpoint, versioned
+pairing handshake, and loopback byte proxy. JNI/Android packaging and WebView
+integration are still separate gates.
+
 ## What the JavaScript PoC proves
 
 The PoC creates an Ed25519 endpoint identity, derives a stable endpoint identifier from its public key, signs a request envelope, verifies that signature at a local gateway, and forwards the request only to an explicitly registered HTTP loopback target. `npm test` also proves that a modified nonce is rejected and that non-loopback targets cannot be registered.

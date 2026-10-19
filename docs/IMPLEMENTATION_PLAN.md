@@ -32,10 +32,12 @@ production transport evidence.
 ### Stage 4: Android transport
 
 - Add a transport abstraction beneath the existing WebView and device store.
+- The shared Rust `android-transport` crate now owns endpoint setup, versioned
+  pairing, and the loopback byte proxy; JNI/Android packaging is still pending.
 - Keep pairing, device names, cancellation, Back behavior, scaling, files,
   camera, notifications, and localization consistent with DSH Mobile.
-- Add native iroh or a separately maintained Android bridge only after the
-  host protocol is stable.
+- Add the native bridge only after the authenticated Rust transport is wired to
+  the WebView origin and its lifecycle is covered on a real device.
 
 ### Stage 5: network and release validation
 
