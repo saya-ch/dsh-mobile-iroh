@@ -5,8 +5,13 @@ uses iroh's end-to-end encrypted QUIC transport to connect a phone-side client
 to a computer running DeepSeek Harness while preserving the DSH Web experience.
 
 The repository is being built in stages. The current main branch contains the
-host-side concept-validation foundation; the production plugin, Android
-transport, and release artifacts are not claimed complete yet.
+host-side concept-validation foundation and an independent Android WebView
+baseline. The production plugin, native Android iroh transport, and release
+artifacts are not claimed complete yet.
+
+The Android baseline lives in [`apps/mobile`](apps/mobile/README.md). Its
+package ID is separate from DSH Mobile so it can be installed for development
+without replacing the existing app.
 
 This is an independent host-side experiment inspired by the public [`zexadev/dsh-tether`](https://github.com/zexadev/dsh-tether) project. It is intentionally outside the main `dsh-mobile` repository and DeepSeek Harness: it contains no production plugin, bundled mobile client, model integration, credentials, or upstream source changes.
 
