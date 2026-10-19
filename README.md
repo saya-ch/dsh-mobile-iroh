@@ -1,8 +1,12 @@
-# DSH Mobile Tether
+# DSH Mobile iroh
 
-An independent, experimental companion for DSH Mobile transport research. The
-current repository is a host-side iroh concept-validation PoC, not a production
-plugin or Android release.
+An independent, experimental transport companion for DSH Mobile. The project
+uses iroh's end-to-end encrypted QUIC transport to connect a phone-side client
+to a computer running DeepSeek Harness while preserving the DSH Web experience.
+
+The repository is being built in stages. The current main branch contains the
+host-side concept-validation foundation; the production plugin, Android
+transport, and release artifacts are not claimed complete yet.
 
 This is an independent host-side experiment inspired by the public [`zexadev/dsh-tether`](https://github.com/zexadev/dsh-tether) project. It is intentionally outside the main `dsh-mobile` repository and DeepSeek Harness: it contains no production plugin, bundled mobile client, model integration, credentials, or upstream source changes.
 
