@@ -57,7 +57,7 @@ class RestoreNavigationWiringTest {
     }
 
     private fun activitySource(): String {
-        val path = "java/io/github/sayach/dshmobile/MainActivity.kt"
+        val path = "java/io/github/sayach/dshmobileiroh/MainActivity.kt"
         val directories = listOf("src/main", "app/src/main", "apps/mobile/android/app/src/main")
         return generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
             .flatMap { base -> directories.asSequence().map { File(base, "$it/$path") } }

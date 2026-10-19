@@ -7,7 +7,6 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
-import java.net.URL
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
@@ -96,6 +95,7 @@ internal object NativeAuthClient {
         caCertificate: ByteArray?,
         expectedInstanceId: String,
         cancellation: NativeConnectionCancellation? = null,
+        transport: TransportEndpoint = LocalTransport,
     ): NativeSession = post(
         origin,
         "/mobile-access/auth/native-pair",
@@ -103,6 +103,7 @@ internal object NativeAuthClient {
         caCertificate,
         expectedInstanceId,
         cancellation,
+        transport,
     ) { input -> parseNativeSessionResponse(input, origin, expectedInstanceId, requireDeviceCredential = true) }
 
     fun renew(
@@ -111,6 +112,7 @@ internal object NativeAuthClient {
         caCertificate: ByteArray?,
         expectedInstanceId: String,
         cancellation: NativeConnectionCancellation? = null,
+        transport: TransportEndpoint = LocalTransport,
     ): NativeSession = post(
         origin,
         "/mobile-access/auth/native-renew",
@@ -118,6 +120,7 @@ internal object NativeAuthClient {
         caCertificate,
         expectedInstanceId,
         cancellation,
+        transport,
     ) { input -> parseNativeSessionResponse(input, origin, expectedInstanceId, requireDeviceCredential = false) }
 
     fun probe(
@@ -126,6 +129,7 @@ internal object NativeAuthClient {
         caCertificate: ByteArray?,
         expectedInstanceId: String,
         cancellation: NativeConnectionCancellation? = null,
+        transport: TransportEndpoint = LocalTransport,
     ): NativeProbe = post(
         origin,
         "/mobile-access/auth/native-probe",
@@ -133,11 +137,16 @@ internal object NativeAuthClient {
         caCertificate,
         expectedInstanceId,
         cancellation,
+        transport,
     ) { input -> parseNativeProbeResponse(input, origin, expectedInstanceId) }
 
     /** Only an explicit 404 yields an absent CA; the pairing key decides whether that is allowed. */
-    fun fetchPairingCa(origin: GatewayOrigin, cancellation: NativeConnectionCancellation? = null): ByteArray? = try {
-        bootstrapGet(origin, "/mobile-access/ca.cer", 16 * 1024, allowMissing = true, cancellation = cancellation)
+    fun fetchPairingCa(
+        origin: GatewayOrigin,
+        cancellation: NativeConnectionCancellation? = null,
+        transport: TransportEndpoint = LocalTransport,
+    ): ByteArray? = try {
+        bootstrapGet(origin, "/mobile-access/ca.cer", 16 * 1024, allowMissing = true, cancellation = cancellation, transport = transport)
     } catch (failure: NativeConnectionCancelled) {
         throw failure
     } catch (failure: NativeAuthFailure) {
@@ -152,13 +161,21 @@ internal object NativeAuthClient {
     }
 
     /** Compatibility discovery probe. Its metadata remains untrusted until pairing-key verification. */
-    fun fetchDiscovery(origin: GatewayOrigin, cancellation: NativeConnectionCancellation? = null): JSONObject = JSONObject(
-        requireNotNull(bootstrapGet(origin, "/mobile-access/discovery", 8 * 1024, cancellation = cancellation)).toString(Charsets.UTF_8),
+    fun fetchDiscovery(
+        origin: GatewayOrigin,
+        cancellation: NativeConnectionCancellation? = null,
+        transport: TransportEndpoint = LocalTransport,
+    ): JSONObject = JSONObject(
+        requireNotNull(bootstrapGet(origin, "/mobile-access/discovery", 8 * 1024, cancellation = cancellation, transport = transport)).toString(Charsets.UTF_8),
     )
 
     /** Reads optional compatibility metadata. A 404 identifies a compatible legacy gateway. */
-    fun fetchMetadata(origin: GatewayOrigin, cancellation: NativeConnectionCancellation? = null): GatewayMetadata? {
-        val bytes = bootstrapGet(origin, "/mobile-access/metadata", 8 * 1024, allowMissing = true, cancellation = cancellation) ?: return null
+    fun fetchMetadata(
+        origin: GatewayOrigin,
+        cancellation: NativeConnectionCancellation? = null,
+        transport: TransportEndpoint = LocalTransport,
+    ): GatewayMetadata? {
+        val bytes = bootstrapGet(origin, "/mobile-access/metadata", 8 * 1024, allowMissing = true, cancellation = cancellation, transport = transport) ?: return null
         return parseGatewayMetadata(JSONObject(bytes.toString(Charsets.UTF_8)))
     }
 
@@ -168,6 +185,7 @@ internal object NativeAuthClient {
         maxBytes: Int,
         allowMissing: Boolean = false,
         cancellation: NativeConnectionCancellation? = null,
+        transport: TransportEndpoint,
     ): ByteArray? {
         cancellation?.throwIfCancelled()
         val trustManager = object : X509TrustManager {
@@ -178,7 +196,7 @@ internal object NativeAuthClient {
         val context = SSLContext.getInstance("TLS").apply {
             init(null, arrayOf(trustManager), SecureRandom())
         }
-        val connection = URL(origin.serialized + path).openConnection() as HttpsURLConnection
+        val connection = transport.open(origin, path)
         val timeouts = nativeAuthTimeouts(origin.host)
         return withCancellableNativeConnection(connection, cancellation) {
             connection.sslSocketFactory = context.socketFactory
@@ -206,10 +224,11 @@ internal object NativeAuthClient {
         caCertificate: ByteArray?,
         expectedInstanceId: String,
         cancellation: NativeConnectionCancellation?,
+        transport: TransportEndpoint,
         parser: (InputStream) -> T,
     ): T {
         cancellation?.throwIfCancelled()
-        val connection = URL(origin.serialized + path).openConnection() as HttpsURLConnection
+        val connection = transport.open(origin, path)
         val timeouts = nativeAuthTimeouts(origin.host)
         return withCancellableNativeConnection(connection, cancellation) {
             try {

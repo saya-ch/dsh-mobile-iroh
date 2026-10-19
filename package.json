@@ -5,6 +5,6 @@
   "scripts": {
     "demo": "node src/demo.mjs",
     "smoke:iroh": "node src/iroh-smoke.mjs",
-    "test": "node --test src/poc.test.mjs src/control-protocol.test.mjs"
+    "test": "node --test src/poc.test.mjs src/control-protocol.test.mjs src/gateway-adapter.test.mjs"
   }
 }

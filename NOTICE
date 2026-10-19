@@ -1,0 +1,10 @@
+This repository includes a Rust host-side sidecar baseline adapted from the
+MIT-licensed dsh-tether reference project by zexadev.
+
+The adapted source remains available under the MIT License. See
+`LICENSE.dsh-tether` for the preserved upstream license text and the source
+repository for the upstream project:
+https://github.com/zexadev/dsh-tether
+
+This repository's adaptation is experimental and does not claim production
+readiness, release support, or upstream endorsement.

@@ -30,6 +30,6 @@ class PairingSubmissionWiringTest {
 
     private fun activitySource(): String = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
         .flatMap { base -> listOf("src/main", "app/src/main", "apps/mobile/android/app/src/main").asSequence()
-            .map { File(base, "$it/java/io/github/sayach/dshmobile/MainActivity.kt") } }
+            .map { File(base, "$it/java/io/github/sayach/dshmobileiroh/MainActivity.kt") } }
         .first { it.isFile }.readText()
 }

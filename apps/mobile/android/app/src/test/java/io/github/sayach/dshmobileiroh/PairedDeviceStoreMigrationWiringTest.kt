@@ -11,7 +11,7 @@ import org.junit.Test
 class PairedDeviceStoreMigrationWiringTest {
     @Test
     fun loadPersistsDisplayOrderAndItsMarkerInTheSameEncryptedWrite() {
-        val store = sourceFile("java/io/github/sayach/dshmobile/PairedDeviceStore.kt").readText()
+        val store = sourceFile("java/io/github/sayach/dshmobileiroh/PairedDeviceStore.kt").readText()
         val load = store.substringAfter("fun load()").substringBefore("fun isMigrationComplete")
         assertTrue(load.contains("PairedDeviceOrderPolicy.initialOrder("))
         assertTrue(load.contains("preferences.boolean(DISPLAY_ORDER_MIGRATION_KEY)"))
@@ -28,7 +28,7 @@ class PairedDeviceStoreMigrationWiringTest {
 
     @Test
     fun emptyLegacyMigrationDoesNotConstructACipherAndDecodeFailureIsNotAnEmptyStore() {
-        val store = sourceFile("java/io/github/sayach/dshmobile/PairedDeviceStore.kt").readText()
+        val store = sourceFile("java/io/github/sayach/dshmobileiroh/PairedDeviceStore.kt").readText()
         val migration = store.substringAfter("fun migrateLegacy(").substringBefore("fun upsert(")
         val empty = migration.substringAfter("if (normalized.isEmpty())").substringBefore("} else {")
         assertFalse(empty.contains("save("))
@@ -45,7 +45,7 @@ class PairedDeviceStoreMigrationWiringTest {
 
     @Test
     fun orderingActionsStayBeforeDeleteAndExistInAllThreeLocales() {
-        val activity = sourceFile("java/io/github/sayach/dshmobile/MainActivity.kt").readText()
+        val activity = sourceFile("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
         val actions = activity.substringAfter("private fun showDeviceActions").substringBefore("private fun editDeviceName")
         assertTrue(actions.contains("PairedDeviceOrderPolicy.canMoveUp"))
         assertTrue(actions.contains("PairedDeviceOrderPolicy.canMoveToTop"))
@@ -63,7 +63,7 @@ class PairedDeviceStoreMigrationWiringTest {
 
     @Test
     fun automaticRestoreUsesTheLegacyMigrationFenceAndFullResetKeepsItUntilLegacyClearSucceeds() {
-        val activity = sourceFile("java/io/github/sayach/dshmobile/MainActivity.kt").readText()
+        val activity = sourceFile("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
         val automatic = activity.substringAfter("private fun recoverAutomatically()").substringBefore("private fun scheduleAutomaticRecovery()")
         assertTrue(automatic.contains("legacyCredentialForRestore(mode)"))
         assertTrue(automatic.contains("legacyCredentialForRestore()?.expiresAt"))

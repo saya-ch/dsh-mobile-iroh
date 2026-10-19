@@ -10,7 +10,7 @@ class ScannerSourceContractTest {
     private val source: String by lazy { sourceText("ScanActivity.kt") }
 
     private fun sourceText(file: String): String {
-        val relative = "src/main/java/io/github/sayach/dshmobile/$file"
+        val relative = "src/main/java/io/github/sayach/dshmobileiroh/$file"
         val paths = listOf(relative, "app/$relative", "apps/mobile/android/app/$relative")
         return generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
             .flatMap { base -> paths.asSequence().map { File(base, it) } }

@@ -39,7 +39,7 @@ class LauncherManifestTest {
 
     @Test
     fun settingsUseOneGearEntryAndPersistOnlyAfterTheComponentUpdate() {
-        val source = sourceFile("java/io/github/sayach/dshmobile/MainActivity.kt").readText()
+        val source = sourceFile("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
         assertTrue(source.contains("setOnClickListener { showDeviceListSettings() }"))
         assertTrue(!source.contains("toolbarIconButton(R.drawable.ic_whale_toolbar"))
         val apply = source.substringAfter("private fun applyAppIcon").substringBefore("private fun showIconSettings")

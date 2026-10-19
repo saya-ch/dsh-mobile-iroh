@@ -316,7 +316,7 @@ class ConnectionCancellationWiringTest {
     private fun method(source: String, name: String): String =
         source.substringAfter("private fun $name(").substringBefore("\n    private fun ")
 
-    private fun activitySource(): String = mainSource("java/io/github/sayach/dshmobile/MainActivity.kt")
+    private fun activitySource(): String = mainSource("java/io/github/sayach/dshmobileiroh/MainActivity.kt")
 
     private fun mainSource(relative: String): String = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
         .flatMap { base -> listOf("src/main", "app/src/main", "apps/mobile/android/app/src/main").asSequence()

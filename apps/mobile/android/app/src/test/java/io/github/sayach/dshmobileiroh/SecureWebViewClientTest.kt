@@ -107,6 +107,6 @@ class SecureWebViewClientTest {
 
     private fun clientSource(): String = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
         .flatMap { base -> listOf("src/main", "app/src/main", "apps/mobile/android/app/src/main").asSequence()
-            .map { File(base, "$it/java/io/github/sayach/dshmobile/SecureWebViewClient.kt") } }
+            .map { File(base, "$it/java/io/github/sayach/dshmobileiroh/SecureWebViewClient.kt") } }
         .first { it.isFile }.readText()
 }
