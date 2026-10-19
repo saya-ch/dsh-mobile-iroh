@@ -1,0 +1,10 @@
+{
+  "name": "dsh-mobile-iroh-poc",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node src/demo.mjs",
+    "smoke:iroh": "node src/iroh-smoke.mjs",
+    "test": "node --test src/poc.test.mjs"
+  }
+}
