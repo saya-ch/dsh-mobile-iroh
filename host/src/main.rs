@@ -16,9 +16,10 @@ use anyhow::{bail, Context as _, Result};
 use clap::{Parser, Subcommand};
 use dsh_mobile_iroh_core::i18n::t;
 use dsh_mobile_iroh_core::{
-    load_or_create_secret, pair_fail_text, read_line_bounded, read_request_head,
-    rewrite_request_head, write_line, write_private, ProxyAuth, Wire, ALPN, MAX_LINE,
-    MAX_UNPAIRED_LINE, PAIR_BAD_CODE, PAIR_EXPIRED, PAIR_NO_WINDOW, PAIR_TOO_MANY_ATTEMPTS,
+    decode_wire, encode_wire, load_or_create_secret, pair_fail_text, read_line_bounded,
+    read_request_head, rewrite_request_head, write_line, write_private, ProxyAuth, Wire, ALPN,
+    MAX_LINE, MAX_UNPAIRED_LINE, PAIR_BAD_CODE, PAIR_EXPIRED, PAIR_NO_WINDOW,
+    PAIR_TOO_MANY_ATTEMPTS,
 };
 use iroh::endpoint::{presets, Connection};
 use iroh::{Endpoint, EndpointId};
@@ -495,7 +496,7 @@ async fn stdin_loop(state: Arc<Mutex<HostState>>) {
                 tool_name,
                 reason,
             } => {
-                let wire = serde_json::to_string(&Wire::Approval {
+                let wire = encode_wire(&Wire::Approval {
                     id,
                     tool_name,
                     reason,
@@ -504,8 +505,7 @@ async fn stdin_loop(state: Arc<Mutex<HostState>>) {
                 broadcast(&state, wire).await;
             }
             PluginIn::ApprovalCancel { id } => {
-                let wire = serde_json::to_string(&Wire::ApprovalCancel { id })
-                    .expect("Wire is serializable");
+                let wire = encode_wire(&Wire::ApprovalCancel { id }).expect("Wire is serializable");
                 broadcast(&state, wire).await;
             }
             PluginIn::PairingBegin => {
@@ -658,7 +658,7 @@ async fn handle_phone(
                         name: name.clone(),
                     });
                     drop(s);
-                    write_line(&mut send, &serde_json::to_string(&Wire::PairOk)?).await?;
+                    write_line(&mut send, &encode_wire(&Wire::PairOk)?).await?;
                     name
                 }
                 Err(reason) => {
@@ -675,7 +675,7 @@ async fn handle_phone(
                     drop(s);
                     write_line(
                         &mut send,
-                        &serde_json::to_string(&Wire::PairFail {
+                        &encode_wire(&Wire::PairFail {
                             reason: reason.into(),
                         })?,
                     )
@@ -760,7 +760,7 @@ async fn handle_phone(
     let reader = async {
         loop {
             match read_line_bounded(&mut recv, MAX_LINE).await {
-                Ok(line) => match serde_json::from_str::<Wire>(&line) {
+                Ok(line) => match decode_wire(&line) {
                     Ok(Wire::Decision { id, outcome }) => {
                         emit(&PluginOut::Decision { id, outcome })
                     }
@@ -810,7 +810,7 @@ async fn handle_phone(
                 let _permit = permit;
                 match read_line_bounded(&mut precv, 256)
                     .await
-                    .map(|l| serde_json::from_str::<Wire>(&l))
+                    .map(|l| decode_wire(&l))
                 {
                     Ok(Ok(Wire::Proxy)) => {}
                     _ => return,
@@ -909,7 +909,7 @@ async fn phone_sim_main(
     write_line(&mut send, &serde_json::to_string(&first)?).await?;
     if code.is_some() {
         let resp = read_line_bounded(&mut recv, MAX_LINE).await?;
-        match serde_json::from_str::<Wire>(&resp)? {
+        match decode_wire(&resp)? {
             Wire::PairOk => eprintln!("[phone-sim] {}", t("配对成功", "paired")),
             Wire::PairFail { reason } => bail!(
                 "{}{}",
@@ -961,7 +961,7 @@ async fn phone_sim_main(
                     };
                     if write_line(
                         &mut psend,
-                        &serde_json::to_string(&Wire::Proxy).expect("Wire is serializable"),
+                        &encode_wire(&Wire::Proxy).expect("Wire is serializable"),
                     )
                     .await
                     .is_err()
@@ -981,7 +981,7 @@ async fn phone_sim_main(
             reason = conn.closed() => bail!("{}{reason}", t("连接断开: ", "connection closed: ")),
             _ = tokio::signal::ctrl_c() => break,
         };
-        match serde_json::from_str::<Wire>(&line)? {
+        match decode_wire(&line)? {
             Wire::Approval {
                 id,
                 tool_name,
@@ -1001,7 +1001,7 @@ async fn phone_sim_main(
                 eprintln!("[phone-sim] {}{outcome}", t("应答: ", "replied: "));
                 write_line(
                     &mut send,
-                    &serde_json::to_string(&Wire::Decision {
+                    &encode_wire(&Wire::Decision {
                         id,
                         outcome: outcome.into(),
                     })?,

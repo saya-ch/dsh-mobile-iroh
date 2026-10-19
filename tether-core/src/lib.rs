@@ -11,6 +11,7 @@ use anyhow::{bail, Context as _, Result};
 use iroh::endpoint::{RecvStream, SendStream};
 use iroh::SecretKey;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 
 pub const ALPN: &[u8] = b"dsh-mobile-iroh/0";
@@ -18,6 +19,7 @@ pub const ALPN: &[u8] = b"dsh-mobile-iroh/0";
 pub const MAX_LINE: usize = 64 * 1024;
 /// 未配对连接首行上限:只够一条 pair 消息,不给未授权方喂大负载的机会
 pub const MAX_UNPAIRED_LINE: usize = 512;
+pub const WIRE_VERSION: u8 = 1;
 
 /// 线协议(iroh 控制流,双向)
 #[derive(Serialize, Deserialize)]
@@ -53,6 +55,32 @@ pub enum Wire {
         id: String,
         outcome: String,
     },
+}
+
+/// Encode one versioned control message for an authenticated iroh stream.
+pub fn encode_wire(message: &Wire) -> Result<String> {
+    let mut value = serde_json::to_value(message)?;
+    let object = value
+        .as_object_mut()
+        .context("wire message must serialize as an object")?;
+    object.insert("version".into(), Value::from(WIRE_VERSION));
+    Ok(serde_json::to_string(&value)?)
+}
+
+/// Decode one versioned control message and reject an unknown wire version.
+pub fn decode_wire(line: &str) -> Result<Wire> {
+    let mut value: Value = serde_json::from_str(line).context("wire message is not valid JSON")?;
+    let object = value
+        .as_object_mut()
+        .context("wire message must be an object")?;
+    let version = object
+        .remove("version")
+        .and_then(|value| value.as_u64())
+        .context("wire message has no version")?;
+    if version != u64::from(WIRE_VERSION) {
+        bail!("unsupported wire version {version}");
+    }
+    Ok(serde_json::from_value(value).context("wire message has an unsupported format")?)
 }
 
 /// 配对失败的原因码。线上只传码,两侧各自渲染。
@@ -517,5 +545,17 @@ mod tests {
         let out = rewrite_request_head(head, &auth());
         assert!(out.contains("Cookie: stale=1\r\n"), "{out}");
         assert!(out.contains("cookie: dsh-auth-abc=v1.xyz\r\n"), "{out}");
+    }
+
+    #[test]
+    fn wire_messages_are_versioned_and_unknown_versions_fail() {
+        let encoded = encode_wire(&Wire::Hello {
+            name: "phone".into(),
+        })
+        .unwrap();
+        assert!(encoded.contains("\"version\":1"), "{encoded}");
+        assert!(matches!(decode_wire(&encoded).unwrap(), Wire::Hello { name } if name == "phone"));
+        assert!(decode_wire(&encoded.replace("\"version\":1", "\"version\":2")).is_err());
+        assert!(decode_wire(r#"{"version":1,"type":"unknown"}"#).is_err());
     }
 }
