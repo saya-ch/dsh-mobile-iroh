@@ -13,6 +13,10 @@ The Android baseline lives in [`apps/mobile`](apps/mobile/README.md). Its
 package ID is separate from DSH Mobile so it can be installed for development
 without replacing the existing app.
 
+Implementation rules and local checks are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md); current work is tracked in
+[`CHANGELOG.md`](CHANGELOG.md).
+
 This is an independent host-side experiment inspired by the public [`zexadev/dsh-tether`](https://github.com/zexadev/dsh-tether) project. It is intentionally outside the main `dsh-mobile` repository and DeepSeek Harness: it contains no production plugin, bundled mobile client, model integration, credentials, or upstream source changes.
 
 ## Rust host-side baseline
