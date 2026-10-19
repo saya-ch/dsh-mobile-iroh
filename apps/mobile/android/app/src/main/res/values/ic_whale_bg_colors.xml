@@ -1,0 +1,8 @@
+<resources>
+    <color name="ic_whale_bg_blue">#E5EBFB</color>
+    <color name="ic_whale_bg_navy">#DCE2F0</color>
+    <color name="ic_whale_bg_teal">#DCEFEC</color>
+    <color name="ic_whale_bg_grey">#E8EAED</color>
+    <color name="ic_whale_bg_black">#F2F2F2</color>
+    <color name="ic_whale_bg_white">#171A1F</color>
+</resources>

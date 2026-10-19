@@ -1,0 +1,347 @@
+{
+  "schemaVersion": 1,
+  "normalization": [
+    {
+      "name": "plain host",
+      "input": "https://dsh.local",
+      "expected": "https://dsh.local"
+    },
+    {
+      "name": "trim and canonicalize default port",
+      "input": "  HTTPS://DSH.LOCAL:443/  ",
+      "expected": "https://dsh.local"
+    },
+    {
+      "name": "retain custom port",
+      "input": "https://dsh.local:3443/",
+      "expected": "https://dsh.local:3443"
+    },
+    {
+      "name": "IPv4 LAN address",
+      "input": "https://192.168.1.20:8443",
+      "expected": "https://192.168.1.20:8443"
+    },
+    {
+      "name": "IPv6 LAN address",
+      "input": "https://[2001:DB8::10]:8443/",
+      "expected": "https://[2001:db8::10]:8443"
+    },
+    {
+      "name": "reject cleartext",
+      "input": "http://dsh.local:3443",
+      "expected": null
+    },
+    {
+      "name": "reject websocket origin",
+      "input": "wss://dsh.local",
+      "expected": null
+    },
+    {
+      "name": "reject credentials",
+      "input": "https://user:secret@dsh.local",
+      "expected": null
+    },
+    {
+      "name": "reject non-root path",
+      "input": "https://dsh.local/mobile",
+      "expected": null
+    },
+    {
+      "name": "reject encoded path",
+      "input": "https://dsh.local/%2F",
+      "expected": null
+    },
+    {
+      "name": "reject query",
+      "input": "https://dsh.local/?token=secret",
+      "expected": null
+    },
+    {
+      "name": "reject fragment",
+      "input": "https://dsh.local/#session",
+      "expected": null
+    },
+    {
+      "name": "reject missing host",
+      "input": "https:///",
+      "expected": null
+    },
+    {
+      "name": "reject zero port",
+      "input": "https://dsh.local:0",
+      "expected": null
+    },
+    {
+      "name": "reject oversized port",
+      "input": "https://dsh.local:65536",
+      "expected": null
+    },
+    {
+      "name": "reject ambiguous trailing dot",
+      "input": "https://dsh.local./",
+      "expected": null
+    },
+    {
+      "name": "public IPv4 with an explicit non-default entry port",
+      "input": "https://8.8.8.8:33080",
+      "expected": "https://8.8.8.8:33080"
+    },
+    {
+      "name": "trim, uppercase scheme, and public IPv4 entry port",
+      "input": "  HTTPS://8.8.8.8:33080/  ",
+      "expected": "https://8.8.8.8:33080"
+    },
+    {
+      "name": "public IPv4 default port is canonicalized away",
+      "input": "https://8.8.8.8:443/",
+      "expected": "https://8.8.8.8"
+    },
+    {
+      "name": "IPv4 literal with an out-of-range octet is rejected",
+      "input": "https://999.1.1.1",
+      "expected": null
+    }
+  ],
+  "connections": [
+    {
+      "name": "plain origin opens root",
+      "input": "https://dsh.local:3443",
+      "expected": {
+        "origin": "https://dsh.local:3443",
+        "initialURL": "https://dsh.local:3443"
+      }
+    },
+    {
+      "name": "pair page without a supplied token",
+      "input": "https://dsh.local:3443/mobile-access/pair",
+      "expected": {
+        "origin": "https://dsh.local:3443",
+        "initialURL": "https://dsh.local:3443/mobile-access/pair"
+      }
+    },
+    {
+      "name": "fingerprint-bound pair fragment is accepted but not persisted",
+      "input": "https://DSH.LOCAL:3443/mobile-access/pair#instance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "origin": "https://dsh.local:3443",
+        "initialURL": "https://dsh.local:3443/mobile-access/pair#instance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "legacy token-only pair fragment is rejected",
+      "input": "https://dsh.local:3443/mobile-access/pair#token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": null
+    },
+    {
+      "name": "pair token never enters a query string",
+      "input": "https://dsh.local:3443/mobile-access/pair?token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": null
+    },
+    {
+      "name": "arbitrary initial paths are rejected",
+      "input": "https://dsh.local:3443/session/abc",
+      "expected": null
+    },
+    {
+      "name": "malformed pair fragment is rejected",
+      "input": "https://dsh.local:3443/mobile-access/pair#instance=short&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": null
+    },
+    {
+      "name": "public IPv4 origin with the tunnel entry port",
+      "input": "https://8.8.8.8:33080",
+      "expected": {
+        "origin": "https://8.8.8.8:33080",
+        "initialURL": "https://8.8.8.8:33080"
+      }
+    },
+    {
+      "name": "fingerprint-bound pair link over a self-signed entry port",
+      "input": "https://8.8.8.8:33080/mobile-access/pair#instance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": {
+        "origin": "https://8.8.8.8:33080",
+        "initialURL": "https://8.8.8.8:33080/mobile-access/pair#instance=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&token=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ],
+  "sameOrigin": [
+    {
+      "name": "root page",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/",
+      "expected": true
+    },
+    {
+      "name": "application route",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://DSH.LOCAL:3443/session/abc?view=compact#latest",
+      "expected": true
+    },
+    {
+      "name": "implicit and explicit default port",
+      "base": "https://dsh.local",
+      "candidate": "https://dsh.local:443/api/status",
+      "expected": true
+    },
+    {
+      "name": "subdomain is different",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://mobile.dsh.local:3443/",
+      "expected": false
+    },
+    {
+      "name": "suffix lookalike is different",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local.evil.example:3443/",
+      "expected": false
+    },
+    {
+      "name": "port is part of origin",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:443/",
+      "expected": false
+    },
+    {
+      "name": "cleartext candidate",
+      "base": "https://dsh.local:3443",
+      "candidate": "http://dsh.local:3443/",
+      "expected": false
+    },
+    {
+      "name": "candidate credentials",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://user@dsh.local:3443/",
+      "expected": false
+    },
+    {
+      "name": "relative URL is not a main navigation target",
+      "base": "https://dsh.local:3443",
+      "candidate": "/session/abc",
+      "expected": false
+    },
+    {
+      "name": "unsafe scheme",
+      "base": "https://dsh.local:3443",
+      "candidate": "javascript:alert(1)",
+      "expected": false
+    }
+  ],
+  "downloads": [
+    {
+      "name": "same-origin export",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/api/session.export?sessionId=abc",
+      "expected": true
+    },
+    {
+      "name": "same-origin attachment",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/api/files/abc",
+      "expected": true
+    },
+    {
+      "name": "authentication control paths are never downloads",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/mobile-access/auth/renew",
+      "expected": false
+    },
+    {
+      "name": "dot segments cannot enter authentication controls",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/exports/../mobile-access/auth/renew",
+      "expected": false
+    },
+    {
+      "name": "encoded dot segments cannot enter authentication controls",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/exports/%2e%2e/mobile-access/auth/renew",
+      "expected": false
+    },
+    {
+      "name": "encoded slash cannot hide authentication controls",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/mobile-access%2fauth/renew",
+      "expected": false
+    },
+    {
+      "name": "encoded backslash cannot hide authentication controls",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/mobile-access%5cauth/renew",
+      "expected": false
+    },
+    {
+      "name": "authentication prefix lookalike remains downloadable",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/mobile-accessibility/export",
+      "expected": true
+    },
+    {
+      "name": "fragment is not sent to a download endpoint",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://dsh.local:3443/api/files/abc#fragment",
+      "expected": false
+    },
+    {
+      "name": "cross-origin download",
+      "base": "https://dsh.local:3443",
+      "candidate": "https://files.example/api/files/abc",
+      "expected": false
+    },
+    {
+      "name": "cleartext download",
+      "base": "https://dsh.local:3443",
+      "candidate": "http://dsh.local:3443/api/files/abc",
+      "expected": false
+    }
+  ],
+  "remoteHost": [
+    {
+      "name": "public IPv4 is a remote candidate",
+      "host": "8.8.8.8",
+      "allowedRemote": true,
+      "allowedLan": false
+    },
+    {
+      "name": "private IPv4 stays local-network only",
+      "host": "192.168.1.10",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "loopback is never a remote entry",
+      "host": "127.0.0.1",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "documentation TEST-NET-3 is never a remote entry",
+      "host": "203.0.113.10",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "CGNAT shared space is never a remote entry",
+      "host": "100.64.0.8",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "user-owned domain is a remote candidate",
+      "host": "dsh.example.com",
+      "allowedRemote": true,
+      "allowedLan": false
+    },
+    {
+      "name": "mDNS name stays local-network only",
+      "host": "computer.local",
+      "allowedRemote": false,
+      "allowedLan": true
+    },
+    {
+      "name": "IPv4 literal with an out-of-range octet is never a remote entry",
+      "host": "999.1.1.1",
+      "allowedRemote": false,
+      "allowedLan": true
+    }
+  ]
+}
