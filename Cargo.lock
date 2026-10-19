@@ -647,6 +647,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dsh-mobile-iroh-android-transport"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dsh-mobile-iroh-core",
+ "iroh",
+ "tokio",
+]
+
+[[package]]
 name = "dsh-mobile-iroh-core"
 version = "0.1.0"
 dependencies = [
