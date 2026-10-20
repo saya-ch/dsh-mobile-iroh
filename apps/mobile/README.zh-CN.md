@@ -1,26 +1,38 @@
 # DSH Mobile iroh Android App
 
-[返回项目 README](../../README.md)
+[返回项目说明](../../README.md) · [English](README.md) · [验证记录](../../VERIFICATION.md)
 
-这个 Android App 以 DSH Mobile 的 WebView 体验为基线：已配对设备管理、局域网和远程配对、取消连接、系统返回键、页面缩放、文件选择、拍照、通知、多语言和无障碍行为都会尽量保持一致，再接入 iroh 传输。
+沿用 DSH Mobile 的设备列表、命名、启动偏好、配对、WebView、取消、返回键、缩放、文件选择、拍照、通知和多语言体验。包名为 `io.github.sayach.dshmobileiroh`，不会覆盖正式 App，也不自动迁移其数据。
 
-应用包名是 `io.github.sayach.dshmobileiroh`，与正式 DSH Mobile App 独立，不会替换或迁移正式 App 的数据。
+## 当前实现
 
-## 当前状态
+启用原生传输的构建提供 iroh 实验入口。扫描或粘贴受信电脑端生成的短期二维码描述符，连接、命名后进入 DSH；保存的记录在下次启动时先恢复 iroh，再续期正常的 Gateway 凭据。电脑端目前需开发者接线进程内 operator API 并提供 TLS 材料，尚无普通用户可用的桌面配对 GUI 或自动证书配置。
 
-当前已经导入并构建独立的 WebView 壳和 HTTPS 传输基线。原生 iroh 传输尚未接入 WebView，因此当前调试包不能视为可用的 iroh 客户端，也不是正式 DSH Mobile 发布包。
+WebView 访问由完整 EndpointId 派生的 HTTPS 域名。Rust 持有固定本地端口，把 TLS 原始字节经 QUIC 送给电脑网关；Java 认证和下载经严格限定目标的本地 CONNECT 代理，继续校验证书 CA 和主机名，不依赖普通 DNS 回退。
 
-## 构建基线 App
+取消、切换电脑、删除和 Activity 销毁会使旧请求失效，迟到结果不能重新打开旧页面或关掉新连接。明确的在线撤销与普通网络失败分开处理。App 已退出后，电脑端仅撤销 iroh peer 的情况，目前下一次连接仍可能只得到通用失败；不声称它必定显示“电脑端已移除”。Gateway 的 `device_revoked` 是另一层结果。
 
-需要 Android SDK 36 和 JDK 17。仓库不提交 `local.properties`，请在本机写入 Android SDK 路径。
+Gateway Token 和 CA 沿用 Keystore 加密；iroh 长期身份目前是 App 私有目录中的 native 文件，尚未做硬件 Keystore 包裹。短配对码和完整二维码不保存为设备凭据。
+
+## 构建
+
+需要 JDK 17、Android SDK 36、Build Tools 36.0.0 和明确选择的 NDK；本机使用 NDK `25.2.9519653`。SDK 路径保存在本机，不提交 `local.properties`。
 
 ```powershell
 Set-Location apps/mobile/android
-./gradlew.bat :app:testDebugUnitTest :app:assembleDebug
+./gradlew.bat --no-daemon -PirohNative=true -PirohNdk=C:/develop/Android/Sdk/ndk/25.2.9519653 lintDebug testDebugUnitTest assembleDebug assembleRelease -x lintAnalyzeDebugUnitTest -x lintAnalyzeDebugAndroidTest
 ```
 
-调试 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。它使用独立的 application ID，不可作为正式签名或生产设备证据。
+不带 `-PirohNative=true` 的包只有原 HTTPS 基线，不含可用 iroh 入口。Debug APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`；R8 Release 产物是未签名 APK，只用于构建检查，不能当正式发行包。
 
-## 计划中的传输接入
+上述命令与本轮实测和 CI 一致：Android Lint 检查应用源码、Manifest 与资源，不包括测试源码分析；JVM 测试仍独立编译和执行。目前没有 instrumentation 测试源集，不能把这个结果描述成全部源码 lint 通过。
 
-iroh 客户端会放在传输抽象之后。WebView 继续只访问受限的本地 Origin，原生层负责 Endpoint 身份、配对、QUIC 流、撤销和清理。页面不会获得私钥或任意原生命令权限。
+当前原生包仅支持 **arm64-v8a、x86_64，最低 Android 10/API 29**。32 位设备尚未覆盖；将来并入主 App 时必须另审 ABI 和签名，不可直接替换所有用户。完整 JNI、ELF 16 KB 和 APK ZIP 检查命令见 [英文构建说明](README.md)。
+
+## 真机验收
+
+识别设备、包名、签名和 WebView 后再安装，不卸载正式 App、不清配对、不绕过签名差异。只操作明确的隔离测试配对。
+
+需要覆盖扫码、冷启动、取消、连接中切设备、返回、文件选择／下载、重连时页面状态、在线撤销、离线撤销恢复、重启、休眠和切网，并分别验证真实直连与 relay／移动网络。桌面传输驱动、JVM 和打包检查都不替代这些证据。
+
+独立产品版本为 `0.1.0-alpha.1`；`MOBILE_COMPATIBILITY_VERSION=0.6.5` 是继承的网关 API 基线，不是第二个产品版本。

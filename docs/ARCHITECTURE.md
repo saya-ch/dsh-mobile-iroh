@@ -1,96 +1,54 @@
 # DSH Mobile iroh architecture
 
-## Summary
+This independent repository implements an authenticated byte carrier and Android integration for the existing DSH Mobile Gateway. It does not implement DSH sessions, model requests, files or agent execution.
 
-This project is an independent transport companion for DSH Mobile. It is
-intended to carry the existing DSH Web experience over an end-to-end encrypted
-iroh/QUIC connection without changing DSH Core or reimplementing DSH sessions.
-
-The current branch contains the protocol foundation and an isolated host-side
-validation harness. The production host sidecar, Android transport, and DSH
-Mobile adapter are not complete yet.
-
-## Transport model
+## Data path
 
 ```text
-DSH WebView
-    │ HTTP / WebSocket
-Android localhost transport adapter
-    │ bounded byte streams
-iroh endpoint (QUIC, endpoint identity, pairing authorization)
-    │ direct path or encrypted relay path
-Host iroh sidecar
-    │ explicit loopback target only
-dsh-mobile HTTPS gateway
-    │ authenticated HTTP / WebSocket proxy
-DSH Web server
+Android WebView / Java HTTPS
+    │ full EndpointId-derived HTTPS authority; selected Gateway CA
+Raw TCP listener / exact-authority CONNECT listener
+    │ opaque TLS bytes
+Authenticated iroh QUIC connection
+    │ direct path or relay, subject to observed network reachability
+Host sidecar
+    │ one explicit loopback TCP target
+DSH Mobile HTTPS Gateway
+    │ existing device/session/CSRF/WebSocket policy
+DSH Web backend
 ```
 
-The iroh layer does not own DSH sessions, model requests, approvals, files, or
-WebView UI. It carries authenticated byte streams to the existing gateway. The
-gateway remains responsible for Origin, session, CSRF, WebSocket, request-size,
-and upstream policy.
+TLS terminates at the computer Gateway. A raw transport connection is not Mobile authorization. The phone stores no Gateway TLS private key, and the sidecar has no DSH launch-cookie injection operation.
 
-## Components
+The full EndpointId is encoded as two DNS labels under `.iroh.localhost`. A stable, explicit local port preserves Origin and browser storage; a bind conflict fails visibly instead of silently changing the page identity. Native Java uses a restricted CONNECT listener because its DNS behavior need not match Chromium's localhost handling.
 
-### Control protocol
+## Components and ownership
 
-The control protocol is a versioned, bounded message envelope. It covers
-endpoint hello, pairing, stream open/close, approval forwarding, and decisions.
-Unknown protocol versions, message types, fields, routes, and oversized input
-fail closed. Nonces and request identifiers are scoped to a peer session and
-must not be accepted twice.
+| Component | Owns | Does not own |
+| --- | --- | --- |
+| Rust host | Endpoint key, pairing window, peer roster, one target, connections and streams | DSH API/session semantics or frontend rewriting |
+| Android Rust/JNI | Phone endpoint, current request generation, raw/CONNECT listeners and shutdown lease | Gateway credentials or WebView navigation policy |
+| Android Activity/controller | Descriptor validation, device records, Keystore credentials, current page and cancellation | Arbitrary native commands or hidden background connections to every listed device |
+| JS sidecar supervisor | Child process, bounded stdio, readiness, stop and failure cleanup | Unauthenticated admin HTTP or model-visible pairing tools |
+| Trusted host session | Identity resolution, Gateway/controller composition, serialized operator commands and injected preferences | Discovering a user's production profile or changing main-plugin providers |
+| Mobile Gateway | Device tokens, sessions, CA-backed HTTPS, Host/Origin, CSRF and WSS route policy | iroh peer identity or automatic transport/device-ID association |
 
-### Host sidecar
+No mutable request owner may be replaced by a late result. Same-peer reconnect generations and Android cancellations retain ownership until their listeners/tasks have actually stopped.
 
-The host sidecar owns the iroh endpoint identity, pairing window, peer registry,
-QUIC streams, and process-level cleanup. It accepts one explicit loopback
-gateway target from its parent plugin. It never accepts a client-supplied
-arbitrary host or filesystem path.
+## Protocols
 
-The plugin communicates with the sidecar through a bounded JSON-lines control
-channel. Sidecar lifecycle events are observable, localized, and safe to retry.
+[Host protocol documentation](../host/README.md) and the shared Rust decoder define the actual wire messages. Version 1 accepts Pair/Hello and their explicit success/failure replies; each proxy stream starts with its bounded versioned discriminator. It does not forward standalone approvals or decisions. QUIC authenticates the peer and protects the transport; the early signed-envelope demo in `experiments/identity` is not used here.
 
-### DSH Mobile adapter
+The trusted parent speaks strict, bounded JSON-lines stdio. Pairing codes appear only in the owning operator's intentional private response. Logs and ordinary status omit codes, tokens, cookies, TLS keys and payload bytes. A write/revoke failure or uncertain operator timeout is not automatically retried as if it had failed before execution.
 
-The eventual adapter will add an optional iroh transport provider to the DSH
-Mobile plugin. It will reuse the existing gateway and device authorization
-seam instead of creating a second DSH authentication system. Enabling iroh
-must not change LAN, Cloudflare, cpolar, FRP, Tailscale, or self-hosted origin
-behavior.
+## Storage
 
-### Android transport
+Host identities and peer lists fail closed when corrupt, unreadable or unsafe. Windows uses creation-time private DACLs and verified non-reparse handles. Unix uses private owner/mode checks and descriptor-relative operations without changing existing directory permissions. The parent owns a profile lock and may not run another host against its live profile.
 
-The Android client will preserve the existing DSH Mobile device list, pairing,
-WebView, cancellation, back navigation, page scaling, file selection, and
-accessibility behavior. iroh will be hidden behind a transport abstraction.
+Android keeps its own app sandbox. Normal Gateway credentials use Keystore encryption; the iroh identity is currently an app-private native file. Imported production-App data is not automatically moved into the experimental package.
 
-The first Android vertical slice should use a local transport adapter between
-the WebView and the native iroh client. The WebView must continue to observe a
-strict local origin and must never receive endpoint private keys or unrestricted
-native commands.
+## Integration and acceptance
 
-## Security requirements
+Main DSH Mobile currently has a closed provider set. [The integration design](INTEGRATION_SEAM.md) identifies the changes that require a separate main-repository review: provider registration, lifecycle/admin UI, device-revocation association, Android metadata, ABI support and signing. The independent operator API and factory do not mean these changes are already integrated.
 
-- Pairing is one-time, short-lived, rate-limited, and bound to a device record.
-- Endpoint identity and paired-device state are stored in private, atomic,
-  crash-safe locations.
-- Revocation removes host authorization and terminates active streams; deleting
-  a local Android row alone is not revocation.
-- The sidecar accepts only an explicitly validated loopback gateway target.
-- HTTP and WebSocket forwarding preserves the gateway's authentication and
-  request policy; raw iroh reachability is not DSH authorization.
-- Relay use must be observable as direct or relay without claiming privacy
-  properties that have not been tested.
-- Logs never contain pairing codes, private keys, cookies, device tokens, or
-  model content.
-
-## Evidence gates
-
-The project uses separate evidence for protocol vectors, host loopback and
-WebSocket forwarding, packed plugin operation, Android instrumentation and
-real-device flows, and public network topologies. A passing lower-level gate
-does not promote a higher-level claim.
-
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for the staged delivery
-and release criteria.
+[VERIFICATION](../VERIFICATION.md) records executed gates and their limits. Local QUIC, a real public Gateway package, desktop Chromium, Java HTTPS, JVM tests, Android compilation and physical-device/network tests are different evidence. CI definitions are not passing remote CI runs.

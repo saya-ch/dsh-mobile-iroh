@@ -26,3 +26,18 @@ owner and cleanup path.
 Preserve upstream copyright and license notices when reusing reference code.
 Do not publish npm packages, APKs, sidecars, or release tags until the exact
 candidate has passed its relevant gates and the evidence is recorded.
+
+Use full EndpointIds for HTTPS authority and storage identity. Keep a stable
+explicit local port; do not silently choose another Origin after a bind failure.
+The sidecar proxies opaque TLS, so it cannot infer Mobile device IDs. Keep
+transport revocation, Mobile-token revocation and network failure distinct.
+
+Private-state operations must validate existing ownership and permissions without
+repairing them. Never chmod an existing user home/development directory, inherit
+a broad Windows DACL for new secrets, follow untrusted links or regenerate an
+unreadable identity. Tests use only owned private directories and clean them up.
+
+Preserve source-owned request generations across JNI, Activity and subprocess
+cleanup. A cancelled request must not revive a WebView or close its successor.
+Test actual Android transport code through transport-sim, but label that as a
+host-driven test, not a physical-device or Android-runtime result.

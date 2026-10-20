@@ -8,3 +8,12 @@ https://github.com/zexadev/dsh-tether
 
 This repository's adaptation is experimental and does not claim production
 readiness, release support, or upstream endorsement.
+
+The Android WebView baseline under apps/mobile/android and its associated
+assets were adapted from saya-ch/dsh-mobile, copyright 2026 Guangqi Zhang,
+under the Apache License, Version 2.0. The original license is preserved in
+LICENSE.dsh-mobile. The root MIT license does not replace the license on
+those imported portions. See https://github.com/saya-ch/dsh-mobile.
+
+The installed DSH Mobile module used by optional integration checks remains
+an external Apache-2.0 dependency; it is not copied or relicensed by a test.
