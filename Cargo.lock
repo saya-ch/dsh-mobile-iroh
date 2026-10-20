@@ -653,6 +653,7 @@ dependencies = [
  "anyhow",
  "dsh-mobile-iroh-core",
  "iroh",
+ "jni 0.21.1",
  "tokio",
 ]
 

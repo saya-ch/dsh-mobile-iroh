@@ -17,6 +17,9 @@ use tokio::io::copy_bidirectional;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+#[cfg(target_os = "android")]
+mod jni_bridge;
+
 const PROXY_PORT_BASE: u16 = 20_000;
 const PROXY_PORT_SPAN: u16 = 12_000;
 
