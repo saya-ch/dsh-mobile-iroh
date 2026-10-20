@@ -1,3 +1,4 @@
+// Historical canonical-envelope study; actual QUIC messages live in tether-core.
 export const PROTOCOL_VERSION = 1
 
 const MAX_MESSAGE_BYTES = 64 * 1024
@@ -79,10 +80,8 @@ export class ReplayWindow {
     const now = this.now()
     for (const [key, expiresAt] of this.#entries) if (expiresAt <= now) this.#entries.delete(key)
     if (this.#entries.has(nonce)) return false
-    if (this.#entries.size >= this.maxEntries) {
-      const oldest = this.#entries.keys().next().value
-      this.#entries.delete(oldest)
-    }
+    // Capacity pressure cannot shorten the promised replay window.
+    if (this.#entries.size >= this.maxEntries) return false
     this.#entries.set(nonce, now + this.ttlMs)
     return true
   }

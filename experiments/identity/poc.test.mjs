@@ -1,3 +1,4 @@
+// Historical experiment coverage, separate from production carrier acceptance.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';

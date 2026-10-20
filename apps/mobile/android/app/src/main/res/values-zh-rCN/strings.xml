@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">DeepSeek Harness</string>
+    <string name="app_name">DSH Mobile iroh</string>
     <string name="connection_center_title">选择连接方式</string>
     <string name="connection_center_description">局域网与远程访问彼此独立。请选择手机这次连接电脑的方式。</string>
     <string name="background_restore_running">正在后台恢复上次连接；你也可以直接选择下面的连接方式。</string>
@@ -197,4 +197,15 @@
     <string name="webview_update_action">查看更新选项</string>
     <string name="webview_continue">继续使用</string>
     <string name="device_storage_unavailable">安全配对存储暂时不可用。请解锁设备后重新打开 App 或重试，本次操作未能完成。</string>
+    <string name="iroh_access_title">iroh 连接（实验）</string>
+    <string name="iroh_access_description">使用原生加密直连或中继，无需另行配置 HTTPS 隧道。</string>
+    <string name="iroh_pairing_help">在你信任的电脑上生成配对信息，然后扫码或粘贴到这里。App 会核对电脑身份和证书后再配对。</string>
+    <string name="iroh_pairing_label">配对信息</string>
+    <string name="iroh_pairing_hint">粘贴电脑端生成的配对信息</string>
+    <string name="iroh_pairing_private">配对信息包含一次性凭据，不会保存到设备列表。</string>
+    <string name="iroh_pairing_invalid">配对信息无效或已过期，请在电脑端重新生成。</string>
+    <string name="iroh_pairing_retry_new">连接或配对未完成。请在电脑端生成新的配对信息后重试。</string>
+    <string name="connection_mode_iroh">iroh</string>
+    <string name="iroh_connect_action">配对并连接</string>
+    <string name="iroh_status_connect_to_check">点按连接后检测</string>
 </resources>

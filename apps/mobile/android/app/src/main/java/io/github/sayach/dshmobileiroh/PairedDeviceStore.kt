@@ -28,9 +28,11 @@ internal data class PairedDeviceRecord(
     val lastConnectedAt: Long?,
     val lastReachableAt: Long?,
     val status: PairedDeviceStatus,
+    val iroh: IrohDeviceBinding? = null,
 ) {
     /** Stable local key used to merge a rotated cpolar origin or a re-pair. */
-    val key: String get() = "${mode.name.lowercase()}:$instanceId"
+    val key: String get() = iroh?.let { "iroh:${it.endpointId}:$instanceId" }
+        ?: "${mode.name.lowercase()}:$instanceId"
 
 }
 
@@ -246,6 +248,13 @@ internal class PairedDeviceStore(
             lastConnectedAt = optionalLong(value, "lastConnectedAt"),
             lastReachableAt = optionalLong(value, "lastReachableAt"),
             status = status,
+            iroh = if (value.has("iroh")) {
+                val binding = value.optJSONObject("iroh") ?: return null
+                if (binding.keys().asSequence().toSet() != setOf("endpointId", "localPort")) return null
+                val peer = binding.opt("endpointId") as? String ?: return null
+                val port = binding.opt("localPort") as? Int ?: return null
+                IrohDeviceBinding(peer, port).takeIf { it.isValid() } ?: return null
+            } else null,
         )
         return row.takeIf { isValid(it) }
     }
@@ -263,6 +272,7 @@ internal class PairedDeviceStore(
         if (row.lastConnectedAt != null) put("lastConnectedAt", row.lastConnectedAt)
         if (row.lastReachableAt != null) put("lastReachableAt", row.lastReachableAt)
         put("status", row.status.name)
+        row.iroh?.let { put("iroh", JSONObject().put("endpointId", it.endpointId).put("localPort", it.localPort)) }
     }
 
     private fun requireValid(row: PairedDeviceRecord) {
@@ -273,7 +283,9 @@ internal class PairedDeviceStore(
         INSTANCE_ID.matches(row.instanceId)
             && (row.deviceId.isEmpty() || DEVICE_ID.matches(row.deviceId))
             && TOKEN.matches(row.deviceToken)
-            && RemoteHostPolicy.isAllowed(row.mode, row.origin.host)
+            && (row.iroh?.let { binding ->
+                binding.isValid() && row.mode == AccessMode.REMOTE && binding.origin == row.origin && row.caCertificate != null
+            } ?: (RemoteHostPolicy.isAllowed(row.mode, row.origin.host) && !IrohDeviceBinding.isIrohHost(row.origin.host)))
             && row.expiresAt > 0L
             && PairedDeviceRecordPolicy.acceptsTrustAnchor(row.mode, row.caCertificate, row.instanceId)
             && normalizeDisplayName(row.displayName) != null

@@ -1,10 +1,18 @@
 {
   "name": "dsh-mobile-iroh",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
   "scripts": {
-    "demo": "node src/demo.mjs",
+    "demo": "node experiments/identity/demo.mjs",
     "smoke:iroh": "node src/iroh-smoke.mjs",
-    "test": "node --test src/poc.test.mjs src/control-protocol.test.mjs src/gateway-adapter.test.mjs src/sidecar-controller.test.mjs"
+    "smoke:reference": "node src/external-reference-smoke.mjs",
+    "smoke:gateway": "node integration/smoke-mobile-gateway.mjs --android-core --browser --jvm",
+    "smoke:host-session": "node integration/smoke-host-session.mjs",
+    "smoke:public-discovery": "node integration/smoke-public-discovery.mjs",
+    "build:android-transport": "node scripts/build-android-transport.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "test": "node --test src/*.test.mjs integration/*.test.mjs scripts/*.test.mjs test-support/*.test.mjs experiments/identity/*.test.mjs"
   }
 }

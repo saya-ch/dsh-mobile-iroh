@@ -1,3 +1,4 @@
+// These vectors do not validate the Rust QUIC or parent-process wire protocols.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { decodeControlMessage, encodeControlMessage, ReplayWindow } from './control-protocol.mjs'
@@ -30,6 +31,8 @@ test('replay window rejects duplicates and expires entries', () => {
   now = 111
   assert.equal(window.accept('one'), true)
   assert.equal(window.accept('two'), true)
+  assert.equal(window.accept('three'), false)
+  assert.equal(window.accept('one'), false)
+  now = 122
   assert.equal(window.accept('three'), true)
-  assert.equal(window.accept('one'), true)
 })

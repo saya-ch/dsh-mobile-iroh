@@ -3,3 +3,7 @@
 
 # ZXing readers are selected dynamically through decode hints.
 -keep class com.google.zxing.** { *; }
+
+# Rust JNI exports bind this class and its native method names by symbol.
+-keep class io.github.sayach.dshmobileiroh.IrohNative { *; }
+-keep,includedescriptorclasses class org.rustls.platformverifier.** { *; }

@@ -1,0 +1,14 @@
+[package]
+name = "dsh-mobile-iroh-transport-sim"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dsh-mobile-iroh-android-transport = { path = "../../android-transport" }
+dsh-mobile-iroh-core = { path = "../../tether-core" }
+iroh = "1.0.0"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "signal", "time"] }

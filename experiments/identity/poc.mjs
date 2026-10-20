@@ -1,3 +1,4 @@
+// Historical signed-envelope experiment; not the authenticated iroh wire implementation.
 import { createHash, generateKeyPairSync, sign, verify } from 'node:crypto';
 import { URL } from 'node:url';
 

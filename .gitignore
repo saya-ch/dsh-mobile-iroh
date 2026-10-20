@@ -5,4 +5,5 @@ node_modules/
 target/
 apps/mobile/android/local.properties
 apps/mobile/android/.gradle/
+apps/mobile/android/.kotlin/
 apps/mobile/android/**/build/
