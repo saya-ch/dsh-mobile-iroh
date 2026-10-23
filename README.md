@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/apps/mobile/android/app/src/main/res/drawable-nodpi/ic_launcher_whale.png" alt="DSH Mobile iroh" width="88" height="88">
+  <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/repository-hero.png" alt="DSH Mobile iroh：加密直连或中继访问 DSH" width="100%">
 </p>
 
 <h1 align="center">DSH Mobile iroh</h1>
