@@ -2,6 +2,10 @@
   <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/repository-hero.png" alt="DSH Mobile iroh: encrypted direct or relay access to DSH" width="100%">
 </p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/apps/mobile/store/android/icon-512.png" alt="DSH Mobile iroh App icon" width="88" height="88">
+</p>
+
 <h1 align="center">DSH Mobile iroh</h1>
 
 <p align="center">Keep using DeepSeek Harness on your computer through an encrypted direct or relayed phone connection.</p>

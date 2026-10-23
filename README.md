@@ -2,6 +2,10 @@
   <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/repository-hero.png" alt="DSH Mobile iroh：加密直连或中继访问 DSH" width="100%">
 </p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/apps/mobile/store/android/icon-512.png" alt="DSH Mobile iroh App 图标" width="88" height="88">
+</p>
+
 <h1 align="center">DSH Mobile iroh</h1>
 
 <p align="center">让手机通过加密直连或中继，继续使用电脑上的 DeepSeek Harness。</p>
