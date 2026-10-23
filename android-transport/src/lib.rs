@@ -410,7 +410,10 @@ async fn own_proxy<R: AsyncRead + Unpin>(owner: ProxyOwner<R>) {
     }
     drop(listener);
     drop(connect_listener);
-    connection.close(0u8.into(), b"control ended");
+    // A local close replaces the recorded remote application-close reason.
+    if connection.close_reason().is_none() {
+        connection.close(0u8.into(), b"control ended");
+    }
     children.abort_all();
     while children.join_next().await.is_some() {}
 }
@@ -607,6 +610,7 @@ mod tests {
             let host = endpoint().await;
             let address = host.addr();
             let (revoke, revoked) = oneshot::channel();
+            let (close_observed, observation) = oneshot::channel();
             let serving = tokio::spawn(async move {
                 let connection = host.accept().await.unwrap().await.unwrap();
                 let (mut send, mut recv) = connection.accept_bi().await.unwrap();
@@ -616,23 +620,79 @@ mod tests {
                     .unwrap();
                 revoked.await.unwrap();
                 connection.close(1u8.into(), b"revoked");
+                // Host shutdown is not part of device revocation.
+                let _ = observation.await;
                 host.close().await;
+            });
+            let mut session =
+                connect_endpoint(endpoint().await, address, None, "phone", test_options())
+                    .await
+                    .unwrap();
+            assert_eq!(session.status(), TransportStatus::Ready);
+            revoke.send(()).unwrap();
+            let observed = timeout(Duration::from_secs(5), session.connection.closed()).await;
+            let mut proxy_owner = session.proxy_task.take().unwrap();
+            let owner_finished = timeout(Duration::from_secs(5), &mut proxy_owner).await;
+            if owner_finished.is_err() {
+                proxy_owner.abort();
+                let _ = proxy_owner.await;
+            }
+            let status = session.status();
+            let _ = close_observed.send(());
+            session.close().await;
+            let served = timeout(Duration::from_secs(5), serving).await;
+            let observed = observed.unwrap();
+            eprintln!(
+                "revocation observed before Host teardown: close={observed:?}, status={status:?}"
+            );
+            assert!(matches!(observed, ConnectionError::ApplicationClosed(close)
+                if close.error_code == 1u8.into() && close.reason.as_ref() == b"revoked"));
+            assert_eq!(status, TransportStatus::Revoked);
+            owner_finished.unwrap().unwrap();
+            served.unwrap().unwrap();
+        });
+    }
+
+    #[test]
+    fn real_quic_control_eof_before_revocation_remains_disconnected() {
+        runtime().block_on(async {
+            let host = endpoint().await;
+            let address = host.addr();
+            let (finish_control, finish) = oneshot::channel();
+            let (close_observed, observation) = oneshot::channel();
+            let serving = tokio::spawn(async move {
+                let connection = host.accept().await.unwrap().await.unwrap();
+                let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+                read_line_bounded(&mut recv, MAX_LINE).await.unwrap();
+                write_line(&mut send, &encode_wire(&Wire::HelloOk).unwrap())
+                    .await
+                    .unwrap();
+                finish.await.unwrap();
+                send.finish().unwrap();
+                let _ = observation.await;
+                let reason = timeout(Duration::from_secs(5), connection.closed()).await;
+                connection.close(1u8.into(), b"revoked");
+                host.close().await;
+                reason.unwrap()
             });
             let session =
                 connect_endpoint(endpoint().await, address, None, "phone", test_options())
                     .await
                     .unwrap();
             assert_eq!(session.status(), TransportStatus::Ready);
-            revoke.send(()).unwrap();
-            timeout(Duration::from_secs(5), session.connection.closed())
-                .await
-                .unwrap();
-            assert_eq!(session.status(), TransportStatus::Revoked);
+            finish_control.send(()).unwrap();
+            let observed = timeout(Duration::from_secs(5), session.connection.closed()).await;
+            let status = session.status();
+            let _ = close_observed.send(());
             session.close().await;
-            timeout(Duration::from_secs(5), serving)
-                .await
-                .unwrap()
-                .unwrap();
+            let served = timeout(Duration::from_secs(5), serving).await;
+            let observed = observed.unwrap();
+            let host_reason = served.unwrap().unwrap();
+            eprintln!(
+                "control EOF before revocation: phone={observed:?}, host={host_reason:?}, status={status:?}"
+            );
+            assert!(matches!(observed, ConnectionError::LocallyClosed));
+            assert_eq!(status, TransportStatus::Disconnected);
         });
     }
 

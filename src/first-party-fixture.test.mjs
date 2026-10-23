@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { access, readdir } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { PassThrough, Writable } from 'node:stream'
 import { createSidecarFixtureRoot, startPhone } from './first-party-fixture.mjs'
@@ -21,6 +21,38 @@ test('fixture owns a fresh home child and lets Rust create private state subdire
 test('fixture labels cannot escape or broaden the cleanup target', async () => {
   for (const label of ['', '../outside', '..', 'Uppercase', 'x'.repeat(49), 'x\\outside']) {
     await assert.rejects(createSidecarFixtureRoot(label), /invalid sidecar fixture label/)
+  }
+})
+
+test('fixture cleanup unlinks projected directories without removing their target data', async () => {
+  const owned = await createSidecarFixtureRoot('projected-root')
+  const outside = await createSidecarFixtureRoot('projected-target')
+  try {
+    await writeFile(join(outside.directory, 'sentinel'), 'outside-owned-profile')
+    const nested = join(owned.directory, 'profile')
+    await mkdir(nested)
+    await symlink(outside.directory, join(nested, 'resolver-projection'), process.platform === 'win32' ? 'junction' : 'dir')
+    await owned.cleanup()
+    assert.equal(await readFile(join(outside.directory, 'sentinel'), 'utf8'), 'outside-owned-profile')
+    await assert.rejects(access(owned.directory), { code: 'ENOENT' })
+  } finally { await owned.cleanup(); await outside.cleanup() }
+})
+
+test('fixture cleanup refuses a root replaced by a directory link', async () => {
+  const owned = await createSidecarFixtureRoot('replaced-root')
+  const outside = await createSidecarFixtureRoot('replaced-target')
+  let linked = false
+  try {
+    await writeFile(join(outside.directory, 'sentinel'), 'retained-target')
+    await rm(owned.directory, { recursive: true })
+    await symlink(outside.directory, owned.directory, process.platform === 'win32' ? 'junction' : 'dir')
+    linked = true
+    await assert.rejects(owned.cleanup(), /root was replaced or linked/u)
+    assert.equal(await readFile(join(outside.directory, 'sentinel'), 'utf8'), 'retained-target')
+  } finally {
+    if (linked) await unlink(owned.directory)
+    else await owned.cleanup()
+    await outside.cleanup()
   }
 })
 

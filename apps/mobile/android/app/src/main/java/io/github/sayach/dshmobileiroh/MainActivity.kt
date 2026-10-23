@@ -142,7 +142,6 @@ class MainActivity : Activity() {
     @Volatile private var activeIroh: IrohCarrierSession? = null
     private var irohRequestId: Long? = null
     private var irohCancellationRegistration: (() -> Unit)? = null
-    private var irohStatusPoll: Runnable? = null
     private var activityResumed = false
     private val recoveryHandler = Handler(Looper.getMainLooper())
     private val restoreUiHandler = Handler(Looper.getMainLooper())
@@ -1719,28 +1718,37 @@ class MainActivity : Activity() {
         activeIroh = null
     }
 
-    private fun stopIrohStatusMonitor() {
-        irohStatusPoll?.let(restoreUiHandler::removeCallbacks)
-        irohStatusPoll = null
-    }
+    private class IrohStatusOwner(val carrier: IrohCarrierSession, val browser: WebView, val documentGeneration: Int)
 
-    private fun startIrohStatusMonitor() {
-        stopIrohStatusMonitor()
-        if (!activityResumed || activeIroh == null || webView == null) return
-        val check = object : Runnable {
-            override fun run() {
-                val carrier = activeIroh ?: return
-                val browser = webView ?: return
-                val generation = secureWebViewClient?.currentDocumentGeneration ?: return
-                if (!activityResumed || isFinishing || isDestroyed || gatewayOrigin != carrier.endpoint.origin) return
-                val status = irohController.status(carrier.requestId)
-                if (activeIroh !== carrier || webView !== browser || secureWebViewClient?.currentDocumentGeneration != generation) return
+    private val irohStatusMonitor by lazy {
+        IrohStatusMonitor<IrohStatusOwner>(
+            intervalMs = IROH_STATUS_POLL_MS,
+            schedule = { delay, task ->
+                restoreUiHandler.postDelayed(task, delay)
+                val remove: () -> Unit = { restoreUiHandler.removeCallbacks(task) }
+                remove
+            },
+            captureOwner = {
+                val carrier = activeIroh
+                val browser = webView
+                val generation = secureWebViewClient?.currentDocumentGeneration
+                if (!activityResumed || isFinishing || isDestroyed || carrier == null || browser == null
+                    || generation == null || gatewayOrigin != carrier.endpoint.origin) null
+                else IrohStatusOwner(carrier, browser, generation)
+            },
+            isCurrent = { owner ->
+                activityResumed && !isFinishing && !isDestroyed && activeIroh === owner.carrier
+                    && webView === owner.browser && gatewayOrigin == owner.carrier.endpoint.origin
+                    && secureWebViewClient?.currentDocumentGeneration == owner.documentGeneration
+            },
+            status = { owner -> irohController.status(owner.carrier.requestId) },
+            onTerminal = { owner, status ->
                 when (status) {
                     IrohTransportStatus.REVOKED -> {
                         val cookies = CookieManager.getInstance()
                         val names = listOf("dsh_ma_session", "dsh_ma_csrf", "__Host-dsh_ma_session", "__Host-dsh_ma_csrf")
                         val left = java.util.concurrent.atomic.AtomicInteger(names.size)
-                        for (name in names) cookies.setCookie(carrier.endpoint.origin.serialized,
+                        for (name in names) cookies.setCookie(owner.carrier.endpoint.origin.serialized,
                             "$name=; Max-Age=0; Path=/; Secure; SameSite=Strict") {
                             if (left.decrementAndGet() == 0) cookies.flush()
                         }
@@ -1752,13 +1760,15 @@ class MainActivity : Activity() {
                         stopIrohTransport()
                         showLoadFailure(LoadFailure.NETWORK)
                     }
-                    IrohTransportStatus.READY -> restoreUiHandler.postDelayed(this, IROH_STATUS_POLL_MS)
+                    IrohTransportStatus.READY -> Unit
                 }
-            }
-        }
-        irohStatusPoll = check
-        restoreUiHandler.postDelayed(check, IROH_STATUS_POLL_MS)
+            },
+        )
     }
+
+    private fun stopIrohStatusMonitor() = irohStatusMonitor.stop()
+
+    private fun startIrohStatusMonitor() = irohStatusMonitor.start()
 
     private fun warnIfTailscale(origin: GatewayOrigin) {
         if (!RemoteHostPolicy.needsTailscaleVpnNotice(origin.host)) return
@@ -2663,13 +2673,16 @@ class MainActivity : Activity() {
         if (requestedDevice?.iroh != null && !hasIrohTransport(requestedDevice.iroh)) {
             val transportAttempt = pendingConnection ?: startConnectionAttempt(mode,
                 message = getString(R.string.connecting_to_device, requestedDevice.displayName), preserveBrowser = preserveWebView)
-            startIrohCarrier(requestedDevice.iroh, null, transportAttempt, onReady = {
-                if (generation == restoreGeneration) restoreTrustedDevice(preferredOrigin, credential, mode,
+            val carrierReady = restoreAttemptGate.connectionCallback(generation, connectionAttempts, transportAttempt) {
+                restoreTrustedDevice(preferredOrigin, credential, mode,
                     generation, deviceKey, preserveWebView, claimSuccess, onFailure)
-            }, onFailure = {
-                finishConnectionAttempt(transportAttempt)
+            }
+            val carrierFailed = restoreAttemptGate.connectionCallback(generation, connectionAttempts, transportAttempt) {
+                // The caller owns retry or terminal UI; a carrier failure does not reset its deadline.
                 onFailure(RestoreFailureDisposition.RETRY_TRANSIENT)
-            })
+            }
+            startIrohCarrier(requestedDevice.iroh, null, transportAttempt,
+                onReady = { carrierReady.run() }, onFailure = carrierFailed::run)
             return
         }
         if (!isOriginAllowed(preferredOrigin, mode)) {
@@ -2862,6 +2875,7 @@ class MainActivity : Activity() {
                 RenewedDocumentAction.KEEP -> {
                     failureDialog?.dismiss()
                     finishConnectionAttempt()
+                    startIrohStatusMonitor()
                 }
                 RenewedDocumentAction.RELOAD -> reload()
             }

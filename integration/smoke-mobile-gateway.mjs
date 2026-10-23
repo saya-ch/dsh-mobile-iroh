@@ -32,6 +32,7 @@ const root = process.platform === 'win32'
 const cleanup = []
 const checks = []
 let modelRequests = 0
+let browserRemoteAddress
 
 async function listen(server, port = 0) {
   const sockets = new Set()
@@ -216,16 +217,21 @@ try {
   if (process.argv.includes('--browser')) {
     const { chromium } = requireMobile('playwright')
     const spki = createHash('sha256').update(new X509Certificate(leaf.cert).publicKey.export({ type: 'spki', format: 'der' })).digest('base64')
-    const browser = await chromium.launch({ headless: true, args: [`--ignore-certificate-errors-spki-list=${spki}`, '--no-proxy-server'] })
+    const browser = await chromium.launch({ headless: true, args: [`--ignore-certificate-errors-spki-list=${spki}`,
+      `--host-resolver-rules=MAP ${hostname} 127.0.0.1`, '--no-proxy-server'] })
     cleanup.push(() => browser.close())
     const context = await browser.newContext()
     await context.addCookies([{ name: mobile.SESSION_COOKIE, value: credential.sessionToken, url: origin, httpOnly: true, secure: true, sameSite: 'Strict' }])
     const page = await context.newPage()
-    await page.goto(`${origin}/probe.html`, { waitUntil: 'domcontentloaded', timeout: 10000 })
+    const document = await page.goto(`${origin}/probe.html`, { waitUntil: 'domcontentloaded', timeout: 10000 })
+    assert.equal(document.status(), 200)
+    browserRemoteAddress = await document.serverAddr()
+    assert.equal(browserRemoteAddress?.ipAddress, '127.0.0.1', 'Browser bypassed the phone loopback carrier')
+    assert.equal(browserRemoteAddress.port, localPort)
     assert.equal(await page.locator('#ready').textContent(), 'TLS carrier')
     assert.equal(await page.evaluate(() => location.origin), origin)
     assert.equal((await context.cookies(irohOrigin('b'.repeat(64), localPort))).length, 0)
-    checks.push('Chromium resolves identity .localhost without DNS overrides; HTTPS document and host-scoped Cookie accepted (only owned certificate SPKI allowed)')
+    checks.push('Chromium fixture maps only the identity hostname to the phone IPv4 carrier; actual document remote IP/port, HTTPS Origin and host-scoped Cookie verified (only owned certificate SPKI allowed)')
   }
   const closed = waitForSocketEvent(websocket, 'close')
   assert.equal(await backend.gateway.access.revokeDevice(credential.deviceId), true)
@@ -234,13 +240,19 @@ try {
   assert.equal((await request('/mobile-access/auth/native-renew', { method: 'POST', body: JSON.stringify({ deviceToken: credential.deviceToken }) })).status, 401)
   checks.push('Mobile device revocation closes active WSS and rejects old HTTP/native renewal')
   assert.equal(modelRequests, 0)
-  console.log(JSON.stringify({ transport: useAndroidCore ? 'android-core-local-quic' : useIroh ? 'first-party-local-quic' : 'controlled-tcp', checks, modelRequests, publicNetwork: false, physicalAndroid: false }))
+  console.log(JSON.stringify({ transport: useAndroidCore ? 'android-core-local-quic' : useIroh ? 'first-party-local-quic' : 'controlled-tcp', checks, modelRequests,
+    ...(browserRemoteAddress ? { browserRemoteAddress, browserFixtureHostMapping: true } : {}), publicNetwork: false, physicalAndroid: false }))
 } finally {
   const failures = []
   for (const close of cleanup.reverse()) { try { await close() } catch (error) { failures.push(error) } }
   assert.equal(dirname(root), fixtureParent)
   assert(/^[.]?dsh-mobile-iroh-gateway-/u.test(basename(root)))
-  try { await rm(root, { recursive: true, force: true }) } catch (error) { failures.push(error) }
-  if (failures.length) throw new AggregateError(failures, 'isolated gateway cleanup failed')
+  if (failures.length === 0) {
+    try { await rm(root, { recursive: true, force: true }) } catch (error) { failures.push(error) }
+  }
+  if (failures.length) {
+    console.error(JSON.stringify({ cleanup: 'failed', preservedFixtureRoot: root }))
+    throw new AggregateError(failures, 'isolated gateway cleanup failed; owned root preserved')
+  }
   console.log('Isolated gateway cleanup completed')
 }

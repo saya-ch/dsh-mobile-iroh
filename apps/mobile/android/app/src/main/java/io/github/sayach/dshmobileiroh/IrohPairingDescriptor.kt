@@ -40,12 +40,14 @@ internal class IrohPairingDescriptor private constructor(
         private val CODE = Regex("^[0-9]{6}$")
         private val TOKEN = Regex("^[A-Za-z0-9_-]{43}$")
         private val FIELDS = setOf("version", "type", "endpointId", "origin", "localPort", "irohCode", "gatewayToken", "caCertificate", "instanceId", "expiresAt")
-        private val KEY = Regex(""""(?:[^"\\]|\\[\s\S])*"\s*:""")
-        private const val JSON_STRING = "\"(?:[^\"\\\\\\x00-\\x1f]|\\\\(?:[\"\\\\/bfnrt]|u[0-9a-fA-F]{4}))*\""
+        private val KEY = Regex(""""(?:[^"\\]|\\[\s\S])*+"\s*+:""")
+        private const val JSON_STRING = "\"(?:[^\"\\\\\\x00-\\x1f]|\\\\(?:[\"\\\\/bfnrt]|u[0-9a-fA-F]{4}))*+\""
         private const val JSON_NUMBER = "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"
-        private const val WS = "[ \\t\\r\\n]*"
+        private const val WS = "[ \\t\\r\\n]*+"
         // Android JSONObject accepts non-JSON syntax; the shared QR protocol does not.
-        private val FLAT_JSON = Regex("\\A$WS\\{$WS(?:$JSON_STRING$WS:$WS(?:$JSON_STRING|$JSON_NUMBER)$WS(?:,$WS$JSON_STRING$WS:$WS(?:$JSON_STRING|$JSON_NUMBER)$WS)*)?}$WS\\z")
+        // Possessive token repetitions keep certificate-length strings off the regex call stack.
+        // Android's ICU regex engine requires both literal object braces escaped.
+        private val FLAT_JSON = Regex("\\A$WS\\{$WS(?:$JSON_STRING$WS:$WS(?:$JSON_STRING|$JSON_NUMBER)$WS(?:,$WS$JSON_STRING$WS:$WS(?:$JSON_STRING|$JSON_NUMBER)$WS)*+)?\\}$WS\\z")
 
         /** Validate exact flat fields, the scanned CA, full peer origin and a short future expiry. */
         fun parse(encoded: String, now: Long = System.currentTimeMillis()): IrohPairingDescriptor {

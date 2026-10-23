@@ -31,6 +31,9 @@ The full EndpointId is encoded as two DNS labels under `.iroh.localhost`. A stab
 | Android Activity/controller | Descriptor validation, device records, Keystore credentials, current page and cancellation | Arbitrary native commands or hidden background connections to every listed device |
 | JS sidecar supervisor | Child process, bounded stdio, readiness, stop and failure cleanup | Unauthenticated admin HTTP or model-visible pairing tools |
 | Trusted host session | Identity resolution, Gateway/controller composition, serialized operator commands and injected preferences | Discovering a user's production profile or changing main-plugin providers |
+| Independent operator | Loopback-only authenticated console, native non-secret settings, current-process upstream authorization and ordered close | An Internet-facing admin service, secret persistence or implicit profile discovery |
+| Native TLS manager | Persistent CA, exact-name leaf, atomic recovery journal and a writer lease held through Gateway activation | Installing a system CA or replacing corrupt credentials |
+| Optional extension host | Public Mobile service in its own Cordis Context, explicit providers/local directory and ordered disposal | Automatic access to another DSH process's live services or all installed extensions |
 | Mobile Gateway | Device tokens, sessions, CA-backed HTTPS, Host/Origin, CSRF and WSS route policy | iroh peer identity or automatic transport/device-ID association |
 
 No mutable request owner may be replaced by a late result. Same-peer reconnect generations and Android cancellations retain ownership until their listeners/tasks have actually stopped.
@@ -46,6 +49,10 @@ The trusted parent speaks strict, bounded JSON-lines stdio. Pairing codes appear
 Host identities and peer lists fail closed when corrupt, unreadable or unsafe. Windows uses creation-time private DACLs and verified non-reparse handles. Unix uses private owner/mode checks and descriptor-relative operations without changing existing directory permissions. The parent owns a profile lock and may not run another host against its live profile.
 
 Android keeps its own app sandbox. Normal Gateway credentials use Keystore encryption; the iroh identity is currently an app-private native file. Imported production-App data is not automatically moved into the experimental package.
+
+Fixed native operator files separately store enabled intent and non-secret upstream Origin/local port. The authorization URL never enters those files. Managed TLS keeps a persistent CA and exact-name leaf in private state; a journal validates interrupted known transactions without regenerating corrupt state. The TLS writer lease remains held through public Gateway start/refresh, excluding a second native writer while files are activated. Refresh failure leaves the old live secure context and sessions intact; explicit retry rereads durable state.
+
+The independent console owns its HTTP server, not the user's DSH process. A single-use fragment becomes a bounded HttpOnly/SameSite session plus CSRF secret; numeric loopback, Host, Origin and body validation remain mandatory. Hiding the browser cancels its displayed pairing window without stopping existing phones. Terminal shutdown closes Gateway consumers before extension services and native stores; failed cleanup retains an owner for retry.
 
 ## Integration and acceptance
 

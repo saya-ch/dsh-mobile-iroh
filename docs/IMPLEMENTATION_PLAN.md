@@ -12,11 +12,22 @@ This plan tracks the independent implementation. It does not authorize publicati
 6. Native Android packaging, JNI initialization, request cancellation/ownership, CONNECT and full identity-derived Origin.
 7. App QR pairing, naming, encrypted credential records, saved-device recovery and current-session revocation handling; separate experimental package and signer configuration.
 8. Combined source, Rust, JVM and native-build receipts; real Linux execution, QR capacity checks and an unfiltered RustSec snapshot report with its maintenance warning retained.
+9. Native durable Host startup preference with explicit restore, cancellation-aware subprocess ownership and new-owner recovery without enabling an off gateway.
+10. Retained-page Android transport monitoring and bounded non-backtracking QR prevalidation, with executable JVM regressions.
+11. Real isolated DSH frontend acceptance with public plugin installation, same-PC carrier-path enforcement, Workspace/Session, retained unsent draft, actual mux recovery and revoked-device rejection. Version-specific receipts and remaining feature parity are recorded in VERIFICATION.
+12. Native private CA/leaf provisioning and journaled recovery; writer lease through public Gateway activation/renewal, with active sessions and WSS retained across refresh.
+13. Independent authenticated loopback operator console and runtime/CLI composition; non-secret configuration persistence, memory-only authorization, QR cancellation, transport peers and certificate status.
+14. Optional public extension service, explicit provider/local directory, in-process and worker execution, authenticated routes and dependency/module rules; no automatic normal-profile mirroring.
+15. Current public Mobile 0.6.16 frontend model selection, actual ZIP content, per-device module rules and real runtime/operator checks with zero model requests.
+16. Pre-device local Node 179, Windows Rust 80, actual Linux 79 and Android JVM 371 checks; native Debug/unsigned R8 Release and optimized Windows Host built. Security trust dependencies updated and 412-package license declarations inventoried, without hiding the remaining maintenance warning.
+17. Android 16 cellular pairing, real DSH resource/API loading, saved-device reconnect, cancellation, system Back and targeted online revocation observed in an isolated physical-device setup. This exposed an Android ICU parser crash and a recovery-budget issue; final checks and remaining coverage are tracked in VERIFICATION.
 
 ## Active acceptance work
 
-- Run physical native-enabled App pairing, saved-device recovery, cancel/switch and revocation checks when hardware is available.
+- Complete final-package recovery-budget checks and the remaining physical native-enabled App scenarios; retain the already observed checks separately.
 - Keep unverified deployment/ABI/signing conditions explicit rather than treating a lower-layer test as product acceptance.
+- Keep exact-candidate local source/build receipts, original failures and bounded public-network observations alongside final results; remote CI is still a separate authorized step.
+- Public EndpointId discovery and relay reconnect remain topology-dependent; a forced-relay initial success and a later discovery failure are separate results, not an overall reliability pass.
 
 ## Required before production integration
 

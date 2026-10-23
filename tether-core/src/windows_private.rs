@@ -260,6 +260,11 @@ fn open_existing(path: &Path, read: bool) -> io::Result<File> {
     if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(denied("private path must not contain a reparse point"));
     }
+    if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
+        && information.nNumberOfLinks != 1
+    {
+        return Err(denied("private file must have exactly one hard link"));
+    }
     if read && information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
         return Err(denied("private state must be a regular file"));
     }
@@ -425,6 +430,7 @@ pub(super) fn open_lock_file(path: &Path) -> io::Result<File> {
         ))?;
     }
     if information.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY) != 0
+        || information.nNumberOfLinks != 1
     {
         return Err(denied("profile lock must be a regular non-reparse file"));
     }
@@ -673,6 +679,34 @@ mod tests {
         // Remove only the junction itself, then the exact owned test root.
         std::fs::remove_dir(&junction).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hard_linked_private_files_and_locks_are_rejected_without_changing_bytes_or_acl() {
+        let owned = root("hardlink");
+        let sentinel = owned.join("sentinel");
+        let linked = owned.join("linked");
+        super::super::write_private(&sentinel, b"keep-private-sentinel").unwrap();
+        std::fs::hard_link(&sentinel, &linked).unwrap();
+        let icacls =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/icacls.exe");
+        let before = std::process::Command::new(&icacls)
+            .arg(&sentinel)
+            .output()
+            .unwrap();
+        assert!(before.status.success());
+        assert!(read_file(&linked, 64).is_err());
+        assert!(super::super::write_private(&linked, b"must-not-replace").is_err());
+        assert!(open_lock_file(&linked).is_err());
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep-private-sentinel");
+        assert_eq!(std::fs::read(&linked).unwrap(), b"keep-private-sentinel");
+        let after = std::process::Command::new(&icacls)
+            .arg(&sentinel)
+            .output()
+            .unwrap();
+        assert!(after.status.success());
+        assert_eq!(before.stdout, after.stdout);
+        std::fs::remove_dir_all(owned).unwrap();
     }
 
     #[test]

@@ -119,7 +119,14 @@ export class IrohRemoteController {
       const expectedId = await this.resolveEndpointId()
       if (!/^[0-9a-f]{64}$/u.test(expectedId)) throw new Error('invalid iroh endpoint identity')
       if (this.#closing || generation !== this.#generation) return
-      const gateway = await this.createGateway({ endpointId: expectedId })
+      let gateway
+      try { gateway = await this.createGateway({ endpointId: expectedId }) }
+      catch (error) {
+        // A trusted factory can fail after creating a listener whose close also
+        // failed. Retain that cleanup owner until a later close actually succeeds.
+        if (typeof error?.gatewayCleanup?.close === 'function') this.#gateway = error.gatewayCleanup
+        throw error
+      }
       this.#gateway = gateway
       if (typeof gateway?.close !== 'function') throw new Error('invalid iroh gateway')
       if (this.#closing || generation !== this.#generation) { await this.#stop(); return }

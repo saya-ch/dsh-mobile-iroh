@@ -32,6 +32,10 @@ jobs:
       - run: cargo test --workspace --locked
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo build --locked -p dsh-mobile-iroh-host -p dsh-mobile-iroh-transport-sim
+      - name: Exercise the real native private-state adapters
+        env:
+          DSH_IROH_TEST_HOST_BINARY: ${{ github.workspace }}/target/debug/dsh-mobile-iroh-host${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: node --test integration/native-preference-store.test.mjs integration/native-config-store.test.mjs integration/native-tls-manager.test.mjs
       - run: npm run smoke:iroh
       - uses: actions/setup-java@v6
         with:
@@ -42,11 +46,16 @@ jobs:
         run: |
           set -euo pipefail
           integration_runtime="$RUNNER_TEMP/iroh-mobile-runtime"
-          npm install --prefix "$integration_runtime" --no-save --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.2 dsh-mobile@0.6.13 playwright@1.63.0
+          npm install --prefix "$integration_runtime" --no-save --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.2 dsh-mobile@0.6.16 playwright@1.63.0
           "$integration_runtime/node_modules/.bin/playwright" install chromium --only-shell --with-deps
           echo "DSH_MOBILE_MODULE=$integration_runtime/node_modules/dsh-mobile/lib/index.mjs" >> "$GITHUB_ENV"
+          echo "DSH_IROH_DSH_BIN=$integration_runtime/node_modules/@deepseek-ai/dsh/lib/bin.js" >> "$GITHUB_ENV"
       - run: npm run smoke:gateway
       - run: npm run smoke:host-session
+      - run: npm run smoke:managed-tls
+      - run: npm run smoke:dsh-frontend
+      - run: npm run smoke:operator-ui
+      - run: npm run smoke:operator-runtime
 
   android:
     name: Native Android build

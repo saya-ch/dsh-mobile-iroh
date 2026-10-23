@@ -165,6 +165,96 @@ fn oversized_unterminated_parent_message_exits_with_bounded_memory() {
     assert!(!process.wait().success());
 }
 
+fn preference_command(root: &std::path::Path, enabled: Option<bool>) -> std::process::Output {
+    let binary = std::env::var_os("DSH_IROH_TEST_HOST_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_dsh-mobile-iroh-host")));
+    let mut command = Command::new(binary);
+    command.args([
+        "--lang",
+        "en",
+        if enabled.is_some() {
+            "preference-save"
+        } else {
+            "preference-load"
+        },
+        "--data-dir",
+    ]);
+    command.arg(root);
+    if let Some(enabled) = enabled {
+        command.args(["--enabled", if enabled { "true" } else { "false" }]);
+    }
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("operator preference child did not close");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(output.stdout.len() <= 256);
+    output
+}
+
+#[test]
+fn preference_processes_persist_across_restart_without_waiting_for_active_host_lease() {
+    let mut host = Process::start("durable-preference");
+    let identity = host.event("ready")["endpoint_id"].clone();
+    let initial = preference_command(&host.root, None);
+    assert!(initial.status.success());
+    assert_eq!(initial.stdout, b"{\"version\":1,\"enabled\":false}\n");
+    let saved = preference_command(&host.root, Some(true));
+    assert!(saved.status.success());
+    assert_eq!(saved.stdout, b"{\"version\":1,\"enabled\":true}\n");
+    drop(host.child.stdin.take());
+    host.event("stopped");
+    assert!(host.wait().success());
+    assert_eq!(preference_command(&host.root, None).stdout, saved.stdout);
+    let mut restarted = Process::spawn(host.root.clone(), false);
+    assert_eq!(restarted.event("ready")["endpoint_id"], identity);
+    let disabled = preference_command(&host.root, Some(false));
+    assert!(disabled.status.success());
+    assert_eq!(disabled.stdout, initial.stdout);
+    drop(restarted.child.stdin.take());
+    restarted.event("stopped");
+    assert!(restarted.wait().success());
+    assert_eq!(preference_command(&host.root, None).stdout, initial.stdout);
+}
+
+#[test]
+fn corrupt_preference_and_held_operator_lease_fail_without_acknowledgement_or_repair() {
+    let mut host = Process::start("invalid-preference");
+    host.event("ready");
+    let lock = dsh_mobile_iroh_core::open_private_lock_file(&host.root.join("operator-state.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    let blocked = preference_command(&host.root, Some(true));
+    assert!(!blocked.status.success());
+    assert!(blocked.stdout.is_empty());
+    drop(lock);
+    let path = host.root.join("operator-state.json");
+    let sentinel = b"private-preference-sentinel";
+    dsh_mobile_iroh_core::write_private(&path, sentinel).unwrap();
+    for enabled in [None, Some(false)] {
+        let rejected = preference_command(&host.root, enabled);
+        assert!(!rejected.status.success());
+        assert!(rejected.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&rejected.stderr).contains("private-preference-sentinel"));
+        assert_eq!(std::fs::read(&path).unwrap(), sentinel);
+    }
+    drop(host.child.stdin.take());
+    host.event("stopped");
+    assert!(host.wait().success());
+}
+
 #[cfg(windows)]
 #[test]
 fn active_profile_lock_cannot_be_unlinked_or_renamed_and_restart_is_safe() {

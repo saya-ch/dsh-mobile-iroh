@@ -8,6 +8,7 @@ import { createServer as createTcpServer } from 'node:net'
 import { isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createHostSession } from './host-session.mjs'
+import { NativePreferenceStore } from './native-preference-store.mjs'
 import { irohHostname } from './origin-contract.mjs'
 import { MAX_PAIRING_DESCRIPTOR_BYTES } from './pairing-descriptor.mjs'
 import { createSidecarFixtureRoot, firstPartyExecutable, resolveSidecarIdentity, startPhone } from '../src/first-party-fixture.mjs'
@@ -19,8 +20,8 @@ const mobile = await import(pathToFileURL(modulePath).href)
 const { generate } = createRequire(modulePath)('selfsigned')
 const qrCode = createRequire(modulePath)('qrcode')
 const owned = await createSidecarFixtureRoot('operator-smoke'), dataDirectory = join(owned.directory, 'host')
-let session, phone, upstream, sidecar
-let enabled = false, modelRequests = 0
+let session, phone, upstream, sidecar, store
+let modelRequests = 0
 const sockets = new Set()
 const bounded = async (promise, timeoutMs, message) => {
   let timer
@@ -45,11 +46,14 @@ try {
   })
   upstream.on('connection', (socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)) })
   await new Promise((resolve, reject) => { upstream.once('error', reject); upstream.listen(0, '127.0.0.1', resolve) })
-  session = createHostSession({ mobile, executable: firstPartyExecutable, dataDirectory,
+  const sessionOptions = { mobile, executable: firstPartyExecutable, dataDirectory,
     upstreamOrigin: `http://127.0.0.1:${upstream.address().port}`, tls, backendHost: '::1', localPort, localOnly: true,
-    store: { load: async () => ({ version: 1, enabled }), save: async (state) => { enabled = state.enabled } },
     sidecarFactory: (options) => { sidecar = new SidecarController(options); return sidecar },
-  })
+  }
+  store = new NativePreferenceStore({ executable: firstPartyExecutable, dataDirectory })
+  session = createHostSession({ ...sessionOptions, store })
+  assert.deepEqual(await session.restore(), { enabled: false, state: 'off' })
+  assert.equal(sidecar, undefined)
   await session.start()
   const { descriptor, qrPayload } = await session.openPairing()
   assert.equal(descriptor.endpointId, endpointId); assert.ok(qrPayload.length > 0)
@@ -80,18 +84,32 @@ try {
   assert.equal(peers.length, 1)
   assert.deepEqual(await session.forgetPeer(peers[0].id), [])
   await bounded(phone.closed, 5000, 'forgotten peer did not close')
-  await session.stop(); assert.equal(enabled, false); assert.equal(session.status().state, 'off')
+  await session.close(); await store.close()
+  store = new NativePreferenceStore({ executable: firstPartyExecutable, dataDirectory })
+  session = createHostSession({ ...sessionOptions, store })
+  assert.equal((await session.restore()).endpointId, endpointId)
+  assert.equal(session.status().origin, descriptor.origin)
+  assert.deepEqual(await store.load(), { version: 1, enabled: true })
+  await session.stop(); assert.deepEqual(await store.load(), { version: 1, enabled: false })
+  await session.close(); await store.close()
+  store = new NativePreferenceStore({ executable: firstPartyExecutable, dataDirectory })
+  session = createHostSession({ ...sessionOptions, store })
+  const previousSidecar = sidecar
+  assert.deepEqual(await session.restore(), { enabled: false, state: 'off' })
+  assert.strictEqual(sidecar, previousSidecar)
   await session.start(); assert.equal(session.status().endpointId, endpointId)
   assert.equal(modelRequests, 0)
   console.log(JSON.stringify({ status: 'passed', owner: 'trusted-in-process HostSession', transport: 'first-party-local-quic', freshCombinedQr: true,
     qrErrorCorrection: 'M', qrVersion: renderedQr.version,
-    nativeMobilePairing: true, authenticatedHttps: true, listAndForgetPeers: true, injectedStoreStopAndExplicitRestart: true, modelRequests, publicNetwork: false, physicalAndroid: false }))
+    nativeMobilePairing: true, authenticatedHttps: true, listAndForgetPeers: true, durablePreferenceRestoredAcrossOwners: true,
+    disabledPreferenceDoesNotAutoStart: true, explicitRestart: true, modelRequests, publicNetwork: false, physicalAndroid: false }))
 } finally {
   const failures = []
   try { await phone?.stop() } catch (error) { failures.push(error) }
   try { await session?.close() } catch (error) { failures.push(error) }
+  try { await store?.close() } catch (error) { failures.push(error) }
   for (const socket of sockets) socket.destroy()
   if (upstream) await new Promise((resolve) => upstream.close(() => resolve()))
-  try { await owned.cleanup() } catch (error) { failures.push(error) }
+  if (failures.length === 0) { try { await owned.cleanup() } catch (error) { failures.push(error) } }
   if (failures.length) throw new AggregateError(failures, 'operator smoke cleanup failed')
 }

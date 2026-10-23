@@ -6,7 +6,7 @@
 
 ## 当前实现
 
-启用原生传输的构建提供 iroh 实验入口。扫描或粘贴受信电脑端生成的短期二维码描述符，连接、命名后进入 DSH；保存的记录在下次启动时先恢复 iroh，再续期正常的 Gateway 凭据。电脑端目前需开发者接线进程内 operator API 并提供 TLS 材料，尚无普通用户可用的桌面配对 GUI 或自动证书配置。
+启用原生传输的构建提供 iroh 实验入口。扫描或粘贴受信电脑端生成的短期二维码描述符，连接、命名后进入 DSH；保存的记录在下次启动时先恢复 iroh，再续期正常的 Gateway 凭据。独立的[电脑管理页](../../operator/README.md) 组合原生 Host／Gateway owner、配置私有证书并生成短期配对二维码；不会自动发现或改动正常 DSH profile。
 
 WebView 访问由完整 EndpointId 派生的 HTTPS 域名。Rust 持有固定本地端口，把 TLS 原始字节经 QUIC 送给电脑网关；Java 认证和下载经严格限定目标的本地 CONNECT 代理，继续校验证书 CA 和主机名，不依赖普通 DNS 回退。
 
@@ -14,9 +14,11 @@ WebView 访问由完整 EndpointId 派生的 HTTPS 域名。Rust 持有固定本
 
 Gateway Token 和 CA 沿用 Keystore 加密；iroh 长期身份目前是 App 私有目录中的 native 文件，尚未做硬件 Keystore 包裹。短配对码和完整二维码不保存为设备凭据。
 
+保留原页面的连接恢复成功后，会重新监测新传输的前台状态。多次重试共享原连接的总等待时间，旧队列中的检查不能影响后继连接。二维码预校验使用兼容 Android 的非回溯重复，保留严格字段、转义校验和 2200 字节上限。JVM 回归与已完成的部分 Activity/WebView 真机检查分别记录在 [VERIFICATION](../../VERIFICATION.md)。
+
 ## 构建
 
-需要 JDK 17、Android SDK 36、Build Tools 36.0.0 和明确选择的 NDK；本机使用 NDK `25.2.9519653`。SDK 路径保存在本机，不提交 `local.properties`。
+需要 JDK 17、Android SDK 36、支持 16 KB ZIP 对齐检查的已安装 Build Tools，以及明确选择的 NDK；本机验证的是 NDK `25.2.9519653` 与 Build Tools `35.0.0`，CI 配置安装 `36.0.0`。检查 APK 时应传入实际已安装的 Build Tools 目录。SDK 路径保存在本机，不提交 `local.properties`。
 
 ```powershell
 Set-Location apps/mobile/android

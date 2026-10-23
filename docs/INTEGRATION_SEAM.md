@@ -16,6 +16,8 @@ Neither sidecar may inject a DSH launch Cookie, rewrite frontend constants, expo
 
 The existing main-plugin RemoteProvider is a closed union and its controller table is not a dynamic third-party registry. A future integration needs an explicitly reviewed provider declaration, configuration, status/admin handling and lifecycle registration. The independent [IrohRemoteController](../src/iroh-remote-controller.mjs), [host operator API](../integration/host-session.mjs) and [Gateway factory](../integration/mobile-gateway-factory.mjs) are the parts to connect; they are not already registered in the main plugin.
 
+The independent Host persists its enabled preference through [NativePreferenceStore](../integration/native-preference-store.mjs), non-secret configuration through [NativeConfigStore](../integration/native-config-store.mjs), and TLS through [NativeTlsManager](../integration/native-tls-manager.mjs). Their fixed native state has separate leases from the running transport. `restore()` honors the saved choice without enabling an off gateway; `start()` is explicit enable, `stop()` is durable disable, and `close()` retains the preference. The independent [operator](../operator/README.md) composes these owners; main-plugin settings registration remains separate integration work.
+
 The Gateway factory uses public exports. It must preserve required/dependency module rules, shared upstream authentication ownership, per-device HTTP authorization and existing provider behavior. Its fixed logical authority port currently also determines the backend listener port; do not bypass parseGatewayConfig to change that invariant.
 
 ## Android seam
@@ -30,12 +32,19 @@ The independent package `io.github.sayach.dshmobileiroh` is a development app, n
 
 [Descriptor v1](../integration/pairing-descriptor.mjs) contains exactly the version/type, full endpoint identity, logical HTTPS Origin and local port, short iroh code, one-time Gateway token, public CA, CA fingerprint and expiry. It is short-lived, limited to 2200 UTF-8 bytes and validated before use. The operator smoke encodes both the actual descriptor and the byte limit as real byte-mode/M-correction QR symbols. Scanning is the user's out-of-band trust action; a self-signed certificate is not independent evidence that an untrusted QR belongs to the intended computer.
 
-Only a trusted host operator may open a pairing window. The operator API is in-process: it is not an unauthenticated HTTP endpoint or a model-visible tool. Future desktop UI must reuse the host's authenticated admin/CSRF policy and never log QR material.
+Only a trusted host operator may open a pairing window. The embedded API is in-process; the independent browser console adds a numeric-loopback-only, single-use-login/session/CSRF-protected adapter, not an unauthenticated or model-visible endpoint. Main Desktop integration must reuse its own authenticated admin/CSRF policy rather than expose this console on the network. Cancelling a displayed QR replaces both one-time windows without returning their replacements; already paired phones remain connected.
+
+## TLS and extension owners
+
+Managed TLS uses a persistent native CA, a 90-day exact-name leaf and renewal before 30 days remain. The native writer lease spans file preparation and the public Gateway `refreshProvidedTls()` call. A failed refresh preserves the previous active secure context and reports an error; a cancelled atomic write is not described as rollback. Corrupt or unknown material is not regenerated automatically. No system trust store changes are needed.
+
+The optional [extension host](../integration/extension-host.mjs) creates a public Mobile service in its own Cordis Context. Explicit providers and an explicit local extension directory are supported, including the public worker mode. It does not mirror a normal DSH profile or supply that process's Core services. Main-plugin integration must use the existing public service owner when appropriate, preserve its lifecycle and avoid double registration. Gateway consumers close before extension effects are disposed.
 
 ## Remaining security/product decisions
 
 - Transport-peer revocation and Mobile device-token revocation are separate authorization layers. Their cross-layer association and unified desktop management need an explicit public interface; opaque TLS proxying cannot infer a Mobile device ID from encrypted bytes.
 - Direct/relay deployment defaults and diagnostics require real topology evidence.
+- A non-empty independent extension manifest and authenticated routes are tested; this does not establish compatibility with every extension or a replacement for a live DSH Context.
 - Android long-term endpoint identity is currently app-private state; hardware-backed Keystore wrapping is a separate hardening decision, not an already implemented guarantee.
 - Preserve imported Apache-2.0/MIT notices and validate final native dependencies/signing before binary distribution.
 

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { lstat, mkdtemp, readdir, rm, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,6 +23,20 @@ export async function createSidecarFixtureRoot(label = 'first-party') {
     directory,
     async cleanup() {
       if (dirname(directory) !== parent || !basename(directory).startsWith(prefix)) throw new Error('sidecar fixture cleanup target escaped its owned root')
+      let metadata
+      try { metadata = await lstat(directory) } catch (error) { if (error.code === 'ENOENT') return; throw error }
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error('sidecar fixture root was replaced or linked')
+      const unlinkProjections = async current => {
+        for (const name of await readdir(current)) {
+          const path = join(current, name)
+          const info = await lstat(path)
+          if (info.isSymbolicLink()) await unlink(path)
+          else if (info.isDirectory()) await unlinkProjections(path)
+        }
+      }
+      // DSH may project resolver links into an owned profile. Unlink them before
+      // recursive removal; never traverse a junction into another installation.
+      await unlinkProjections(directory)
       await rm(directory, { recursive: true, force: true })
     },
   })

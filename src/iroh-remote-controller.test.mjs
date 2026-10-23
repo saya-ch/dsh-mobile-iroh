@@ -117,6 +117,23 @@ test('a gateway close failure remains owned for a retry', async () => {
   assert.equal(f.controller.gateway(), undefined)
 })
 
+test('a rejected factory transfers its failed listener cleanup for explicit close retry', async () => {
+  let closes = 0, canClose = false
+  const cleanup = { async close() { closes++; if (!canClose) throw new Error('listener still owned') } }
+  const f = fixture({ createGateway: async () => { throw Object.assign(new Error('startup failed'), { gatewayCleanup: cleanup }) } })
+  await f.controller.initialize()
+  await assert.rejects(f.controller.setEnabled(true), /startup and cleanup failed/)
+  assert.equal(f.controller.gateway(), cleanup)
+  assert.equal(f.controller.status().errorCode, 'iroh_cleanup_failed')
+  assert.equal(f.calls.includes('sidecar-create'), false)
+  await assert.rejects(f.controller.close(), /listener still owned/)
+  assert.equal(f.controller.gateway(), cleanup)
+  canClose = true
+  await f.controller.close()
+  assert.equal(f.controller.gateway(), undefined)
+  assert.equal(closes, 3)
+})
+
 test('unexpected exit reports error and queues cleanup without silent restart', async () => {
   const f = fixture()
   await f.controller.initialize(); await f.controller.setEnabled(true)

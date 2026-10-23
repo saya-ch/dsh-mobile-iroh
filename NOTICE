@@ -17,3 +17,8 @@ those imported portions. See https://github.com/saya-ch/dsh-mobile.
 
 The installed DSH Mobile module used by optional integration checks remains
 an external Apache-2.0 dependency; it is not copied or relicensed by a test.
+
+The profile-composition fixture integration/dsh-web-fixture.mjs adapts the
+Apache-2.0-licensed DSH Mobile development fixtures, copyright 2026 Guangqi
+Zhang. Its source notice and LICENSE.dsh-mobile retain those terms; the root
+MIT license does not replace them.

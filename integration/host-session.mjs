@@ -31,14 +31,18 @@ export class IrohHostSession {
   #generation = 0
   #queue = Promise.resolve()
   #startTask
+  #restoreTask
+  #reconnectTask
   #stopTask
   #closeTask
   #pairingBusy = false
   #cancelWait
   #errorCode
   #disabledOverride = false
+  #preferenceAbort = new AbortController()
 
-  constructor({ mobile, executable, dataDirectory, upstreamOrigin, upstreamAuthenticatedUrl, tls,
+  constructor({ mobile, executable, dataDirectory, upstreamOrigin, upstreamAuthenticatedUrl, tls, tlsManager, extensionHost,
+    tlsCheckIntervalMs, tlsRenewBeforeMs,
     store, localPort = DEFAULT_IROH_LOCAL_PORT, backendHost = '127.0.0.1', localOnly = false,
     commandTimeoutMs = 5000, now = () => Date.now(), onStatus,
     resolveIdentity = resolveSidecarIdentity,
@@ -51,7 +55,8 @@ export class IrohHostSession {
       || !Number.isSafeInteger(localPort) || localPort < 1024 || localPort > 65535
       || typeof resolveIdentity !== 'function' || typeof gatewayFactory !== 'function'
       || typeof sidecarFactory !== 'function' || typeof now !== 'function') throw fault('invalid_host_operator_options')
-    this.#options = Object.freeze({ mobile, executable, dataDirectory, upstreamOrigin, upstreamAuthenticatedUrl, tls,
+    this.#options = Object.freeze({ mobile, executable, dataDirectory, upstreamOrigin, upstreamAuthenticatedUrl, tls, tlsManager, extensionHost,
+      tlsCheckIntervalMs, tlsRenewBeforeMs,
       store, localPort, backendHost, localOnly, commandTimeoutMs, now, onStatus, resolveIdentity, gatewayFactory, sidecarFactory })
     this.#controller = this.#makeController()
   }
@@ -69,8 +74,52 @@ export class IrohHostSession {
   start() {
     if (this.#closed) return Promise.reject(fault('host_operator_closed'))
     if (this.#startTask !== undefined) return this.#startTask
+    this.#startTask = this.#activate(true).finally(() => { this.#startTask = undefined })
+    return this.#startTask
+  }
+
+  /** Restore the durable startup choice without enabling a previously disabled Host. */
+  restore() {
+    if (this.#closed) return Promise.reject(fault('host_operator_closed'))
+    if (this.#restoreTask !== undefined) return this.#restoreTask
+    this.#restoreTask = this.#activate(false).finally(() => { this.#restoreTask = undefined })
+    return this.#restoreTask
+  }
+
+  /** Explicitly replace the runtime while retaining its durable identity and enabled intent. */
+  reconnect() {
+    if (this.#closed) return Promise.reject(fault('host_operator_closed'))
+    if (this.#reconnectTask !== undefined) return this.#reconnectTask
+    this.#invalidate(); this.#stopped = true; this.#mustRetire = true
+    this.#reconnectTask = this.#activate(true).finally(() => { this.#reconnectTask = undefined })
+    return this.#reconnectTask
+  }
+
+  /** Safe metadata for the certificate currently served, not private material paths. */
+  tlsStatus() { return this.#controller.gateway()?.tlsStatus?.() ?? this.#options.tlsManager?.status() }
+
+  /** Renew the provided leaf without retiring active transport or HTTP Sessions on failure. */
+  renewTls({ signal } = {}) {
+    if (this.#closed) return Promise.reject(fault('host_operator_closed'))
     const generation = this.#generation
-    this.#startTask = this.#enqueue(async () => {
+    return this.#enqueue(async () => {
+      try {
+        signal?.throwIfAborted()
+        const { gateway } = this.#running(generation)
+        if (typeof gateway.renewTls !== 'function') throw fault('host_operator_tls_unavailable')
+        const result = await gateway.renewTls({ signal })
+        this.#check(generation); signal?.throwIfAborted()
+        return result
+      } catch (error) {
+        if (error instanceof HostOperatorError) throw error
+        throw fault(signal?.aborted || generation !== this.#generation ? 'host_operator_cancelled' : 'host_operator_tls_renew_failed')
+      }
+    })
+  }
+
+  #activate(enable) {
+    const generation = this.#generation
+    return this.#enqueue(async () => {
       try {
         this.#check(generation)
         if (this.#mustRetire) {
@@ -90,15 +139,17 @@ export class IrohHostSession {
           this.#initialized = true
         }
         this.#check(generation)
-        if (this.#controller.status().state === 'error') await this.#controller.reconnect()
-        else await this.#controller.setEnabled(true)
+        if (enable) {
+          if (this.#controller.status().state === 'error') await this.#controller.reconnect()
+          else await this.#controller.setEnabled(true)
+        }
         this.#check(generation)
-        if (this.#controller.status().state !== 'ready') throw fault('host_operator_not_ready')
-        this.#stopped = false
+        const state = this.#controller.status().state
+        if (state !== 'ready' && (enable || state !== 'off')) throw fault('host_operator_not_ready')
+        this.#stopped = state !== 'ready'
         return this.status()
-      } catch (error) { return this.#failOperation(error, generation, 'host_operator_start_failed') }
-    }).finally(() => { this.#startTask = undefined })
-    return this.#startTask
+      } catch (error) { return this.#failOperation(error, generation, enable ? 'host_operator_start_failed' : 'host_operator_restore_failed') }
+    })
   }
 
   /** Disable durably without deleting identity, peers, or Mobile device records. */
@@ -106,14 +157,19 @@ export class IrohHostSession {
     if (this.#closed) return Promise.reject(fault('host_operator_closed'))
     if (this.#stopTask !== undefined) return this.#stopTask
     this.#invalidate(); this.#stopped = true
+    const generation = this.#generation
     this.#stopTask = this.#enqueue(async () => {
       try {
+        this.#check(generation)
         await this.#prepareIdentity()
+        this.#check(generation)
         let invalidState = false
         try { await this.#loadState() } catch { invalidState = true }
         await this.#retire()
+        this.#check(generation)
         if (invalidState) throw fault('invalid_host_operator_state')
-        await this.#options.store.save({ version: 1, enabled: false })
+        await this.#saveState({ version: 1, enabled: false })
+        this.#check(generation)
         this.#disabledOverride = true
         this.#errorCode = undefined
         this.#notify()
@@ -177,6 +233,22 @@ export class IrohHostSession {
     }).finally(() => { this.#pairingBusy = false })
   }
 
+  /** Invalidate the displayed QR by replacing both one-time windows without exposing new secrets. */
+  cancelPairing() {
+    if (this.#closed) return Promise.reject(fault('host_operator_closed'))
+    const generation = this.#generation
+    return this.#enqueue(async () => {
+      try {
+        const { sidecar, gateway } = this.#running(generation)
+        await this.#freshEvent(sidecar, { version: 1, type: 'pairing-begin' }, event => event.type === 'pairing', generation)
+        this.#running(generation)
+        await this.#bounded(Promise.resolve().then(() => gateway.gateway.access.openPairing()), generation)
+        this.#running(generation)
+        return Object.freeze({ cancelled: true })
+      } catch (error) { return this.#failOperation(error, generation, 'host_operator_pairing_failed') }
+    })
+  }
+
   /** List transport peers, not DSH Sessions or Mobile persistent credentials. */
   listPeers() {
     return this.#peerOperation({ version: 1, type: 'device-list' }, () => true)
@@ -197,19 +269,34 @@ export class IrohHostSession {
         const event = await this.#freshEvent(sidecar, command, (event) => event.type === 'devices' && accepts(event.devices), generation)
         this.#running(generation)
         return Object.freeze(event.devices.map(({ id, name, paired_at, online }) => Object.freeze({ id, name, paired_at, online })))
-      } catch (error) { return this.#failOperation(error, generation, 'host_operator_peer_operation_failed') }
+      } catch (error) {
+        if (command.type === 'device-list' && !this.#closed && generation === this.#generation
+          && !this.#mustRetire && this.#controller.status().state === 'ready'
+          && error instanceof HostOperatorError && ['host_operator_command_timeout', 'host_operator_command_failed'].includes(error.code)) {
+          // The uncorrelated control stream cannot safely accept another
+          // operation after a late reply, but a read-only query did not revoke
+          // an active phone. Keep its data path until explicit recovery/stop.
+          this.#mustRetire = true; this.#errorCode = 'host_operator_control_uncertain'; this.#notify()
+          throw fault(this.#errorCode)
+        }
+        return this.#failOperation(error, generation, 'host_operator_peer_operation_failed')
+      }
     })
   }
 
   #makeController() {
     let controller
     controller = new IrohRemoteController({
-      store: this.#options.store, localOnly: this.#options.localOnly, localPort: this.#options.localPort,
+      store: { load: () => this.#loadState(), save: (state) => this.#saveState(state) },
+      localOnly: this.#options.localOnly, localPort: this.#options.localPort,
       resolveEndpointId: () => this.#prepareIdentity(),
       createGateway: ({ endpointId }) => this.#options.gatewayFactory({
         mobile: this.#options.mobile, endpointId, localPort: this.#options.localPort, backendHost: this.#options.backendHost,
         upstreamOrigin: this.#options.upstreamOrigin, upstreamAuthenticatedUrl: this.#options.upstreamAuthenticatedUrl,
         stateFile: join(this.#options.dataDirectory, 'mobile-devices.json'), tls: this.#options.tls,
+        tlsManager: this.#options.tlsManager, extensionHost: this.#options.extensionHost,
+        tlsCheckIntervalMs: this.#options.tlsCheckIntervalMs, tlsRenewBeforeMs: this.#options.tlsRenewBeforeMs,
+        signal: this.#preferenceAbort.signal,
       }),
       createSidecar: async ({ proxyTarget }) => {
         const sidecar = await this.#options.sidecarFactory({ executable: this.#options.executable, dataDir: this.#options.dataDirectory, proxyTarget })
@@ -234,10 +321,15 @@ export class IrohHostSession {
   }
 
   async #loadState() {
-    const state = await this.#options.store.load()
+    const state = await this.#options.store.load({ signal: this.#preferenceAbort.signal })
     if (state === null || typeof state !== 'object' || Object.keys(state).sort().join(',') !== 'enabled,version'
       || state.version !== 1 || typeof state.enabled !== 'boolean') throw fault('invalid_host_operator_state')
     return state
+  }
+
+  async #saveState(state) {
+    if (this.#closed) throw fault('host_operator_cancelled')
+    await this.#options.store.save(state, { signal: this.#preferenceAbort.signal })
   }
 
   #check(generation) {
@@ -259,6 +351,8 @@ export class IrohHostSession {
 
   #invalidate() {
     this.#generation += 1
+    this.#preferenceAbort.abort()
+    this.#preferenceAbort = new AbortController()
     this.#cancelWait?.(fault('host_operator_cancelled'))
   }
 
@@ -272,6 +366,7 @@ export class IrohHostSession {
 
   async #failOperation(error, generation, fallback) {
     const code = error instanceof HostOperatorError ? error.code : fallback
+    if (code === 'host_operator_not_ready' && this.#mustRetire && this.#errorCode === 'host_operator_control_uncertain') throw fault(code)
     if (!this.#closed && generation === this.#generation) {
       this.#errorCode = code; this.#stopped = true
       try { await this.#retire() } catch { this.#errorCode = 'host_operator_cleanup_failed' }
@@ -305,7 +400,7 @@ export class IrohHostSession {
       const cancel = (error) => finish(error)
       const timer = setTimeout(() => finish(fault('host_operator_command_timeout')), this.#options.commandTimeoutMs)
       this.#cancelWait = cancel
-      promise.then((value) => finish(undefined, value), () => finish(fault('host_operator_command_failed')))
+      promise.then((value) => finish(undefined, value), error => finish(error instanceof HostOperatorError ? error : fault('host_operator_command_failed')))
       if (this.#closed || generation !== this.#generation) cancel(fault('host_operator_cancelled'))
     })
   }

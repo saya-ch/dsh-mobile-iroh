@@ -10,9 +10,15 @@
     "smoke:reference": "node src/external-reference-smoke.mjs",
     "smoke:gateway": "node integration/smoke-mobile-gateway.mjs --android-core --browser --jvm",
     "smoke:host-session": "node integration/smoke-host-session.mjs",
+    "smoke:managed-tls": "node integration/smoke-managed-tls.mjs",
+    "smoke:dsh-frontend": "node integration/smoke-dsh-frontend.mjs",
     "smoke:public-discovery": "node integration/smoke-public-discovery.mjs",
+    "operator": "node operator/cli.mjs",
+    "smoke:operator-ui": "node operator/smoke-ui.mjs",
+    "smoke:operator-runtime": "node operator/smoke-runtime.mjs",
     "build:android-transport": "node scripts/build-android-transport.mjs",
     "check:docs": "node scripts/check-docs.mjs",
-    "test": "node --test src/*.test.mjs integration/*.test.mjs scripts/*.test.mjs test-support/*.test.mjs experiments/identity/*.test.mjs"
+    "check:licenses": "node scripts/dependency-inventory.mjs",
+    "test": "node --test src/*.test.mjs integration/*.test.mjs operator/*.test.mjs scripts/*.test.mjs test-support/*.test.mjs experiments/identity/*.test.mjs"
   }
 }

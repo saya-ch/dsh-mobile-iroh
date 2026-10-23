@@ -49,6 +49,73 @@ class IrohPairingDescriptorTest {
     }
 
     @Test
+    fun certificateLengthStringsParseAtTheByteLimitBeforeAndAfterOtherFields() {
+        val fields = descriptor()
+        val ca = fields.getString("caCertificate")
+        assertTrue("The regression needs a certificate-length JSON string", ca.length >= 1000)
+        val certificateEntry = "\"caCertificate\":" + JSONObject.quote(ca)
+        val remaining = fields.keys().asSequence().filter { it != "caCertificate" }.map { key ->
+            val value = fields.get(key)
+            JSONObject.quote(key) + ":" + if (value is String) JSONObject.quote(value) else value.toString()
+        }.toList()
+        for (entries in listOf(listOf(certificateEntry) + remaining, remaining + certificateEntry)) {
+            val encoded = "{" + entries.joinToString(",") + "}"
+            assertTrue(encoded.toByteArray(Charsets.UTF_8).size <= IrohPairingDescriptor.MAX_BYTES)
+            val atLimit = encoded.padEnd(IrohPairingDescriptor.MAX_BYTES, ' ')
+            val parsed = IrohPairingDescriptor.parse(atLimit, now)
+            assertEquals(binding, parsed.binding)
+            assertArrayEquals(TestCertificates.ingressCa, parsed.caCertificate)
+        }
+    }
+
+    @Test
+    fun standardEscapesAndExponentNumbersRemainJsonWhileEscapedDuplicateKeysAreRejected() {
+        val valid = descriptor().toString()
+        val escaped = valid.replace("\"version\":1", "\"\\u0076ersion\":1e0")
+            .replace("https://", "https:\\/\\/")
+            .replace("\"caCertificate\":\"M", "\"caCertificate\":\"\\u004d")
+        assertTrue(escaped.contains("\"\\u0076ersion\":1e0"))
+        assertTrue(escaped.contains("https:\\/\\/"))
+        assertTrue(escaped.contains("\"caCertificate\":\"\\u004d"))
+        assertTrue(escaped.toByteArray(Charsets.UTF_8).size <= IrohPairingDescriptor.MAX_BYTES)
+        assertEquals(binding, IrohPairingDescriptor.parse(escaped, now).binding)
+        for (suffix in listOf(
+            ",\"version\":1}",
+            ",\"\\u0076ersion\":1}",
+            ",\"\\u0075nknown\":1}",
+        )) {
+            val encoded = valid.dropLast(1) + suffix
+            assertTrue(encoded.toByteArray(Charsets.UTF_8).size <= IrohPairingDescriptor.MAX_BYTES)
+            assertThrows(IOException::class.java) { IrohPairingDescriptor.parse(encoded, now) }
+        }
+    }
+
+    @Test
+    fun manyFlatUnknownFieldsRejectWithinTheDescriptorBudget() {
+        val encoded = (0 until 200).joinToString(",", "{", "}") { "\"x$it\":0" }
+        assertTrue(encoded.toByteArray(Charsets.UTF_8).size <= IrohPairingDescriptor.MAX_BYTES)
+        assertThrows(IOException::class.java) { IrohPairingDescriptor.parse(encoded, now) }
+    }
+
+    @Test
+    fun longEscapedStringsAndMalformedEscapeTailsRejectWithinTheDescriptorBudget() {
+        val valid = descriptor().toString()
+        val ca = descriptor().getString("caCertificate")
+        for (payload in listOf(
+            "\\x41", "\\u004", "\\u00G0",
+            "\\u0041".repeat(200) + "\\u00G0",
+            "\\\"".repeat(350) + "\\x",
+            "\\\\".repeat(600) + "\\",
+            "A".repeat(1200) + "\n",
+            "A".repeat(1200) + "\u0000",
+        )) {
+            val encoded = valid.replace(JSONObject.quote(ca), "\"$payload\"")
+            assertTrue(encoded.toByteArray(Charsets.UTF_8).size <= IrohPairingDescriptor.MAX_BYTES)
+            assertThrows(IOException::class.java) { IrohPairingDescriptor.parse(encoded, now) }
+        }
+    }
+
+    @Test
     fun rejectsUnknownDuplicateNonJsonAndOversizedPayloadsBeforeParsingNestedData() {
         val valid = descriptor().toString()
         for (text in listOf(

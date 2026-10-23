@@ -1,6 +1,10 @@
 //! First-party authenticated iroh byte carrier. No DSH credentials or approval
 //! decisions are accepted by the sidecar; the target gateway owns application authorization.
 
+mod operator_config;
+mod preferences;
+mod tls;
+
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -11,10 +15,9 @@ use std::time::Duration;
 use anyhow::{bail, Context as _, Result};
 use clap::{Parser, Subcommand};
 use dsh_mobile_iroh_core::{
-    create_private_directory, decode_wire, encode_wire, load_or_create_secret,
-    open_private_lock_file, pair_fail_text, read_line_bounded, read_private_file,
-    validate_device_name, write_line, write_private, Wire, ALPN, MAX_UNPAIRED_LINE, PAIR_BAD_CODE,
-    PAIR_EXPIRED, PAIR_NO_WINDOW, PAIR_TOO_MANY_ATTEMPTS,
+    create_private_directory, decode_wire, encode_wire, open_private_lock_file, pair_fail_text,
+    read_line_bounded, read_private_file, validate_device_name, write_line, write_private, Wire,
+    ALPN, MAX_UNPAIRED_LINE, PAIR_BAD_CODE, PAIR_EXPIRED, PAIR_NO_WINDOW, PAIR_TOO_MANY_ATTEMPTS,
 };
 use iroh::endpoint::{presets, Connection};
 use iroh::{Endpoint, EndpointAddr, EndpointId};
@@ -85,6 +88,65 @@ enum Command {
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
+    /// Read only the fixed private startup preference; does not launch iroh.
+    PreferenceLoad {
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    /// Persist the fixed private startup preference; does not launch iroh.
+    PreferenceSave {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long, required = true, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    /// Prepare fixed durable CA and endpoint certificate without launching iroh.
+    TlsPrepare {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long, default_value_t = 90)]
+        leaf_validity_days: u16,
+        #[arg(long, default_value_t = 30)]
+        renew_before_days: u16,
+        #[arg(long)]
+        hold: bool,
+        #[arg(long, default_value_t = 60000, value_parser = clap::value_parser!(u64).range(1..=60000))]
+        lease_timeout_ms: u64,
+    },
+    /// Renew only the leaf, retaining the CA and endpoint identity.
+    TlsRenew {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long, default_value_t = 90)]
+        leaf_validity_days: u16,
+        #[arg(long, default_value_t = 30)]
+        renew_before_days: u16,
+        #[arg(long)]
+        hold: bool,
+        #[arg(long, default_value_t = 60000, value_parser = clap::value_parser!(u64).range(1..=60000))]
+        lease_timeout_ms: u64,
+    },
+    /// Read safe metadata for a complete fixed TLS state.
+    TlsStatus {
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    /// Load only the fixed, nonsecret operator startup settings.
+    OperatorConfigLoad {
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    /// Save only canonical upstream and transport choices; accepts no DSH token.
+    OperatorConfigSave {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        upstream_origin: String,
+        #[arg(long)]
+        local_port: u16,
+        #[arg(long, required = true, action = clap::ArgAction::Set)]
+        local_only: bool,
+    },
 }
 
 #[derive(Deserialize)]
@@ -108,6 +170,46 @@ enum PluginIn {
     DeviceList,
     DeviceForget { id: String },
     Shutdown,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TlsRelease {
+    version: u8,
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+async fn wait_tls_release(deadline: Duration) -> Result<()> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    // Tokio stdin owns an uncancellable blocking-pool read, which would keep
+    // runtime shutdown waiting after this command's lease deadline. This bounded
+    // reader belongs only to the one-shot native process and ends with it.
+    std::thread::spawn(move || {
+        let result = (|| -> Result<()> {
+            use std::io::Read as _;
+            let mut input = std::io::stdin().lock();
+            let mut bytes = Vec::new();
+            loop {
+                let mut byte = [0u8; 1];
+                input.read_exact(&mut byte)?;
+                if byte[0] == b'\n' {
+                    break;
+                }
+                if bytes.len() == 128 {
+                    bail!("TLS release exceeds byte limit");
+                }
+                bytes.push(byte[0]);
+            }
+            let release: TlsRelease = serde_json::from_slice(&bytes)?;
+            if release.version != 1 || release.kind != "tls-release" {
+                bail!("invalid TLS lease release");
+            }
+            Ok(())
+        })();
+        let _ = sender.send(result);
+    });
+    timeout(deadline, receiver).await??
 }
 
 fn decode_command(line: &str) -> Result<PluginIn> {
@@ -361,12 +463,79 @@ async fn make_endpoint(secret: iroh::SecretKey, local_only: bool) -> Result<Endp
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     dsh_mobile_iroh_core::i18n::set_from_tag(&cli.lang);
+    let tls_force = matches!(&cli.command, Command::TlsRenew { .. });
     match cli.command {
+        Command::TlsPrepare {
+            data_dir,
+            leaf_validity_days,
+            renew_before_days,
+            hold,
+            lease_timeout_ms,
+        }
+        | Command::TlsRenew {
+            data_dir,
+            leaf_validity_days,
+            renew_before_days,
+            hold,
+            lease_timeout_ms,
+        } => {
+            let policy = tls::Policy {
+                leaf_validity_days,
+                renew_before_days,
+            };
+            let (state, lease) = if hold {
+                tls::prepare_held(&data_dir, policy, tls_force)
+                    .map(|(state, lease)| (state, Some(lease)))
+            } else {
+                tls::prepare(&data_dir, policy, tls_force).map(|state| (state, None))
+            }
+            .map_err(|_| anyhow::anyhow!("host TLS preparation failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+            if hold {
+                std::io::Write::flush(&mut std::io::stdout())?;
+                wait_tls_release(Duration::from_millis(lease_timeout_ms))
+                    .await
+                    .map_err(|_| anyhow::anyhow!("host TLS lease release failed"))?;
+            }
+            drop(lease);
+        }
+        Command::TlsStatus { data_dir } => {
+            let state =
+                tls::status(&data_dir).map_err(|_| anyhow::anyhow!("host TLS status failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::OperatorConfigLoad { data_dir } => {
+            let state = operator_config::load(&data_dir)
+                .map_err(|_| anyhow::anyhow!("host operator configuration load failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::OperatorConfigSave {
+            data_dir,
+            upstream_origin,
+            local_port,
+            local_only,
+        } => {
+            let state = operator_config::save(&data_dir, &upstream_origin, local_port, local_only)
+                .map_err(|_| anyhow::anyhow!("host operator configuration save failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::PreferenceLoad { data_dir } => {
+            let state = preferences::load(&data_dir)
+                .map_err(|_| anyhow::anyhow!("host preference load failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::PreferenceSave { data_dir, enabled } => {
+            let state = preferences::save(&data_dir, enabled)
+                .map_err(|_| anyhow::anyhow!("host preference save failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
         Command::Id { data_dir } => {
             let dir = data_dir.unwrap_or_else(|| default_data_dir("dsh-mobile-iroh"));
             println!(
                 "{}",
-                load_or_create_secret(&dir.join("identity.key"))?.public()
+                tls::load_identity(&dir)
+                    .map_err(|_| anyhow::anyhow!("host identity unavailable"))?
+                    .public()
             );
         }
         Command::Host {
@@ -419,7 +588,8 @@ async fn host_main(
     let _lease = lock_data_dir(&data_dir)?;
     let store_path = data_dir.join("paired.json");
     let store = load_store(&store_path)?;
-    let secret = load_or_create_secret(&data_dir.join("identity.key"))?;
+    let secret =
+        tls::load_identity(&data_dir).map_err(|_| anyhow::anyhow!("host identity unavailable"))?;
     let endpoint = make_endpoint(secret, local_only).await?;
     let (shutdown, mut shutdown_rx) = watch::channel(false);
     let mut state = HostState {
@@ -768,7 +938,7 @@ async fn phone_sim_main(
         bail!("local-only phone requires explicit loopback peer addresses");
     }
     let endpoint = make_endpoint(
-        load_or_create_secret(&data_dir.join("identity.key"))?,
+        tls::load_identity(&data_dir).map_err(|_| anyhow::anyhow!("host identity unavailable"))?,
         local_only,
     )
     .await?;

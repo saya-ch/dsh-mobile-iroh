@@ -67,6 +67,172 @@ test('construction is inert; safe identity preparation precedes store access and
   assert.equal(f.saved.at(-1).enabled, true)
 })
 
+test('managed TLS and extension owners are forwarded without transferring their lifetime', async () => {
+  const tlsManager = { status: () => ({ state: 'unprepared' }), close: () => assert.fail('external TLS owner was closed') }
+  const extensionHost = { service: {}, close: () => assert.fail('external extension owner was closed') }
+  let gatewayOptions
+  const base = fixture()
+  const f = fixture({ tlsManager, extensionHost, tlsCheckIntervalMs: 10, tlsRenewBeforeMs: 20,
+    gatewayFactory: async options => { gatewayOptions = options; return base.options.gatewayFactory(options) } })
+  await f.session.start()
+  assert.strictEqual(gatewayOptions.tlsManager, tlsManager)
+  assert.strictEqual(gatewayOptions.extensionHost, extensionHost)
+  assert.equal(gatewayOptions.tlsCheckIntervalMs, 10)
+  assert.equal(gatewayOptions.tlsRenewBeforeMs, 20)
+  assert(gatewayOptions.signal instanceof AbortSignal)
+  assert.equal(gatewayOptions.signal.aborted, false)
+  await f.session.stop()
+  assert.equal(gatewayOptions.signal.aborted, true)
+  await f.session.close(); await base.session.close()
+})
+
+test('explicit reconnect replaces consumers without changing endpoint or enabled preference', async () => {
+  const f = fixture()
+  await f.session.start()
+  const first = f.session.status().endpointId
+  await f.session.reconnect()
+  assert.equal(f.session.status().endpointId, first)
+  assert.equal(f.session.status().state, 'ready')
+  assert.equal(f.sidecars.length, 2)
+  assert.equal(f.gateways.length, 2)
+  assert.equal(f.saved.at(-1).enabled, true)
+  await f.session.close()
+})
+
+test('failed leaf renewal keeps the working Gateway and transport ready', async () => {
+  const f = fixture()
+  await f.session.start()
+  f.gateways[0].tlsStatus = () => ({ state: 'ready', leafValidTo: now + 1000 })
+  f.gateways[0].renewTls = async () => { throw new Error('private-key-path') }
+  await assert.rejects(f.session.renewTls(), hasCode('host_operator_tls_renew_failed'))
+  assert.equal(f.session.status().state, 'ready')
+  assert.equal(f.sidecars.length, 1)
+  assert(!f.calls.includes('sidecar-stop'))
+  assert.equal(f.session.tlsStatus().leafValidTo, now + 1000)
+  f.gateways[0].renewTls = async () => ({ renewed: true })
+  assert.deepEqual(await f.session.renewTls(), { renewed: true })
+  await f.session.close()
+})
+
+test('cancelling a displayed pairing rotates both one-time windows without returning replacements', async () => {
+  const f = fixture()
+  await f.session.start()
+  await f.session.openPairing()
+  const before = f.calls.filter(call => call === 'mobile-pairing').length
+  const result = await f.session.cancelPairing()
+  assert.deepEqual(result, { cancelled: true })
+  assert.equal(f.calls.filter(call => call === 'mobile-pairing').length, before + 1)
+  assert.equal(f.calls.filter(call => call === 'pairing-begin').length, 2)
+  assert(!JSON.stringify(result).includes('123456'))
+  assert.equal(f.session.status().state, 'ready')
+  await f.session.close()
+})
+
+test('restore retains disabled choice and does not create a gateway or save enabled', async () => {
+  const f = fixture()
+  assert.deepEqual(await f.session.restore(), { enabled: false, state: 'off' })
+  assert.deepEqual(f.calls, ['identity', 'store-load'])
+  assert.deepEqual(f.saved, [])
+  await assert.rejects(f.session.openPairing(), hasCode('host_operator_not_ready'))
+  await f.session.close()
+})
+
+test('a new Host owner restores true after close and false after durable stop', async () => {
+  const first = fixture()
+  await first.session.start(); await first.session.close()
+  const writes = first.saved.length
+  const restored = fixture({ store: first.store })
+  assert.equal((await restored.session.restore()).state, 'ready')
+  assert.equal(first.saved.length, writes)
+  assert.equal(restored.sidecars.length, 1)
+  await restored.session.stop(); await restored.session.close()
+  assert.deepEqual(first.saved.at(-1), { version: 1, enabled: false })
+  const disabled = fixture({ store: first.store })
+  const disabledWrites = first.saved.length
+  assert.deepEqual(await disabled.session.restore(), { enabled: false, state: 'off' })
+  assert.equal(disabled.sidecars.length, 0); assert.equal(first.saved.length, disabledWrites)
+  await disabled.session.close()
+})
+
+test('queued restore and explicit start preserve the callers distinct intents', async () => {
+  const f = fixture()
+  const restoring = f.session.restore(), starting = f.session.start()
+  assert.strictEqual(f.session.restore(), restoring)
+  assert.deepEqual(await restoring, { enabled: false, state: 'off' })
+  assert.equal((await starting).state, 'ready')
+  assert.equal(f.sidecars.length, 1); assert.equal(f.saved.length, 1)
+  await f.session.close()
+})
+
+test('corrupt restored preference is never replaced or treated as enabled', async () => {
+  const f = fixture(); f.setStored({ version: 2, enabled: true })
+  await assert.rejects(f.session.restore(), hasCode('invalid_host_operator_state'))
+  assert.equal(f.gateways.length, 0); assert.deepEqual(f.saved, [])
+  await f.session.close()
+})
+
+test('close cancels a pending preference restore and waits for its owner cleanup', async () => {
+  const entered = deferred(), cancelled = deferred(), released = deferred()
+  const f = fixture({ store: {
+    load: ({ signal }) => {
+      entered.resolve()
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => { cancelled.resolve(); void released.promise.then(() => reject(new Error('cancelled and closed'))) }, { once: true })
+      })
+    },
+    save: async () => { throw new Error('cancelled restore must not save') },
+  } })
+  const restoring = f.session.restore(), rejected = assert.rejects(restoring, hasCode('host_operator_cancelled'))
+  await entered.promise
+  let closed = false
+  const closing = f.session.close().then(() => { closed = true })
+  await cancelled.promise; await tick(); assert.equal(closed, false)
+  released.resolve(); await closing; await rejected
+  assert.equal(f.gateways.length, 0)
+  await assert.rejects(f.session.restore(), hasCode('host_operator_closed'))
+})
+
+test('stop cancels a pending restore before durably recording disabled', async () => {
+  const entered = deferred(); let loads = 0, saved
+  const f = fixture({ store: {
+    load: ({ signal }) => {
+      loads += 1
+      if (loads > 1) return Promise.resolve({ version: 1, enabled: true })
+      entered.resolve()
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }))
+    },
+    save: async (value) => { saved = value },
+  } })
+  const restoring = f.session.restore(), rejected = assert.rejects(restoring, hasCode('host_operator_cancelled'))
+  await entered.promise; await f.session.stop(); await rejected
+  assert.deepEqual(saved, { version: 1, enabled: false }); assert.equal(f.gateways.length, 0)
+  await f.session.close()
+})
+
+test('save failure does not start a gateway and is never retried automatically', async () => {
+  let writes = 0
+  const f = fixture({ store: { load: async () => ({ version: 1, enabled: false }), save: async () => { writes += 1; throw new Error('disk unavailable') } } })
+  await assert.rejects(f.session.start(), hasCode('host_operator_start_failed'))
+  assert.equal(writes, 1); assert.equal(f.gateways.length, 0)
+  await f.session.close()
+})
+
+test('close aborts a pending enable save before any gateway can be started', async () => {
+  const entered = deferred(), cancelled = deferred(), released = deferred()
+  const f = fixture({ store: {
+    load: async () => ({ version: 1, enabled: false }),
+    save: (_state, { signal }) => {
+      entered.resolve()
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => {
+        cancelled.resolve(); void released.promise.then(() => reject(new Error('save process closed')))
+      }, { once: true }))
+    },
+  } })
+  const starting = f.session.start(), rejected = assert.rejects(starting, hasCode('host_operator_cancelled'))
+  await entered.promise; const closing = f.session.close(); await cancelled.promise
+  released.resolve(); await closing; await rejected; assert.equal(f.gateways.length, 0)
+})
+
 test('ordinary object inspection cannot serialize injected launch credentials', async () => {
   const secret = 'http://127.0.0.1:3080/?token=operator-test-launch-secret'
   const f = fixture({ upstreamAuthenticatedUrl: secret })
@@ -125,6 +291,27 @@ test('concurrent pairing is rejected, not queued to invalidate the first QR', as
   f.sidecars[0].emit({ version: 1, type: 'pairing', code: '234567', expires_in_sec: 120 })
   assert.equal((await pending).descriptor.irohCode, '234567')
   assert.equal(f.calls.filter((value) => value === 'pairing-begin').length, 1)
+  await f.session.close()
+})
+
+test('a read-only control timeout preserves the phone data path until explicit reconnect', async () => {
+  const f = fixture()
+  await f.session.start(); f.sidecars[0].autoDevices = false
+  await assert.rejects(f.session.listPeers(), hasCode('host_operator_control_uncertain'))
+  assert.equal(f.calls.includes('sidecar-stop'), false)
+  assert.equal(f.calls.includes('gateway-close'), false)
+  assert.equal(f.session.status().state, 'error')
+  assert.equal(f.session.status().errorCode, 'host_operator_control_uncertain')
+  f.sidecars[0].emit({ version: 1, type: 'devices', devices: [] })
+  await assert.rejects(f.session.forgetPeer(peer), hasCode('host_operator_not_ready'))
+  assert.equal(f.calls.includes('device-forget'), false)
+  await assert.rejects(f.session.openPairing(), hasCode('host_operator_not_ready'))
+  assert.equal(f.calls.includes('sidecar-stop'), false)
+  assert.equal(f.calls.includes('gateway-close'), false)
+  await f.session.reconnect()
+  assert.equal(f.session.status().state, 'ready')
+  assert.equal(f.sidecars.length, 2)
+  assert.equal((await f.session.listPeers())[0].id, peer)
   await f.session.close()
 })
 

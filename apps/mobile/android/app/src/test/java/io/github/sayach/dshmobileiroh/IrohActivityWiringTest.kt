@@ -42,6 +42,20 @@ class IrohActivityWiringTest {
     }
 
     @Test
+    fun carrierFailureDoesNotFinishTheConnectionBeforeItsRetryOwnerDecides() {
+        val source = file("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
+        val carrierRestore = source.substringAfter("if (requestedDevice?.iroh != null && !hasIrohTransport(requestedDevice.iroh)) {")
+            .substringBefore("if (!isOriginAllowed(preferredOrigin, mode))")
+        assertTrue("The carrier restore branch must be inspected", carrierRestore.contains("startIrohCarrier"))
+        assertFalse("Carrier failure must retain the original overall connection deadline",
+            carrierRestore.contains("finishConnectionAttempt(transportAttempt)"))
+        assertEquals("Both carrier outcomes must check restore and connection ownership", 2,
+            Regex("restoreAttemptGate\\.connectionCallback\\(generation, connectionAttempts, transportAttempt\\)")
+                .findAll(carrierRestore).count())
+        assertTrue(carrierRestore.contains("onReady = { carrierReady.run() }, onFailure = carrierFailed::run"))
+    }
+
+    @Test
     fun allNewUserFacingPairingStringsExistAcrossTheThreeLocales() {
         val keys = setOf("iroh_access_title", "iroh_access_description", "iroh_pairing_help", "iroh_pairing_label",
             "iroh_pairing_hint", "iroh_pairing_private", "iroh_pairing_invalid", "iroh_pairing_retry_new",
@@ -57,13 +71,29 @@ class IrohActivityWiringTest {
     @Test
     fun foregroundRevocationMonitorKeepsTheRowButStopsReconnectAndClearsOnlyThisSession() {
         val source = file("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
-        val monitor = source.substringAfter("private fun startIrohStatusMonitor()").substringBefore("private fun warnIfTailscale(")
-        for (check in listOf("activityResumed", "currentDocumentGeneration", "activeIroh !== carrier", "webView !== browser", "IrohTransportStatus.REVOKED", "stopIrohTransport()", "cancelAutomaticRecovery()", "handleDeviceRevoked()", "Max-Age=0")) {
+        val monitor = source.substringAfter("private val irohStatusMonitor by lazy").substringBefore("private fun warnIfTailscale(")
+        for (check in listOf("IrohStatusMonitor<IrohStatusOwner>", "activityResumed", "currentDocumentGeneration", "activeIroh === owner.carrier", "webView === owner.browser", "IrohTransportStatus.REVOKED", "stopIrohTransport()", "cancelAutomaticRecovery()", "handleDeviceRevoked()", "Max-Age=0")) {
             assertTrue("Monitor missing $check", monitor.contains(check))
         }
         assertFalse(monitor.contains("removeAllCookies"))
         assertFalse(monitor.contains("pairedDeviceStore.remove"))
         assertTrue(source.substringAfter("override fun onPause()").substringBefore("override fun onDestroy()").contains("stopIrohStatusMonitor()"))
+        assertTrue(source.contains("private fun stopIrohStatusMonitor() = irohStatusMonitor.stop()"))
+        assertTrue(source.contains("private fun startIrohStatusMonitor() = irohStatusMonitor.start()"))
+    }
+
+    @Test
+    fun retainedPageRenewalRestartsTheSameMonitorAsReloadAndResume() {
+        val source = file("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
+        val retained = source.substringAfter("private fun preserveLiveDocumentOrReload(")
+            .substringBefore("private fun finishConnectionWhenPageReady(")
+        val keep = retained.substringAfter("RenewedDocumentAction.KEEP -> {")
+            .substringBefore("RenewedDocumentAction.RELOAD ->")
+        assertTrue(keep.contains("finishConnectionAttempt()"))
+        assertTrue(keep.indexOf("startIrohStatusMonitor()") > keep.indexOf("finishConnectionAttempt()"))
+        assertTrue(retained.contains("showBrowser(origin, caCertificate, fallbackUrl)"))
+        assertTrue(source.substringAfter("override fun onResume()").substringBefore("override fun onPause()").contains("startIrohStatusMonitor()"))
+        assertTrue(source.substringAfter("private fun showBrowser(").substringBefore("private fun openTaskNotificationSettings()").contains("startIrohStatusMonitor()"))
     }
 
     @Test

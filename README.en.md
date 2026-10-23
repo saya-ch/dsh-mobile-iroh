@@ -18,10 +18,16 @@ A full EndpointId becomes two DNS-safe labels in `https://<first32>.<last32>.iro
 - Versioned, bounded messages; connection/stream budgets; fail-closed state; owned shutdown.
 - Private Unix state and Windows creation-time DACLs, existing-file checks, reparse rejection and a deletion-protected active profile lock.
 - Public Mobile Gateway factory and an independent provider lifecycle, without changing the main plugin.
+- Persistent native CA/leaf provisioning, exact EndpointId hostname certificates and scheduled leaf renewal through the public Gateway TLS-refresh method.
+- A loopback-only browser operator console for configuration, start/stop/reconnect, QR pairing, transport peers and certificate status, protected by a single-use login, session and CSRF checks.
+- An optional independent extension host for explicit providers or a selected local extension directory, not automatic replication of a DSH profile.
+- Native private storage for the Host startup preference; explicit restore preserves a disabled choice instead of enabling a gateway merely because the owner was reconstructed.
 - Android JNI, cancellation ownership, a raw TLS listener and a strict HTTPS CONNECT bridge. Integrated pairing/device UI remains subject to its recorded validation.
 - Real local QUIC plus HTTP, WSS, TLS rejection, Java HTTPS and Chromium Origin checks.
 
 [VERIFICATION](VERIFICATION.md) distinguishes these results from physical Android, public NAT/relay, formal signing and production support.
+
+An Android 16 phone on a cellular network has completed pairing, real DSH page loading, saved-device reconnection, cancellation and online revocation checks. Failure recovery remains under development; there is no production App release or main-plugin integration.
 
 ## Development
 
@@ -37,9 +43,25 @@ npm run smoke:iroh
 
 Set `DSH_MOBILE_MODULE` to an isolated installed public Mobile module's absolute `lib/index.mjs` path before `npm run smoke:gateway`. That check uses the actual Android transport crate through a host test driver, a pinned CA, Chromium and standard Java HTTPS; it does not execute an Android Activity. Setup is documented in [CONTRIBUTING](CONTRIBUTING.md).
 
+`npm run smoke:dsh-frontend` additionally requires `DSH_IROH_DSH_BIN`, the absolute isolated DSH CLI entry. It loads the real frontend and checks model selection, module rules, authenticated extensions, ZIP export and retained Session/draft across transport restart without model requests. See [its scope](CONTRIBUTING.md#full-dsh-frontend).
+
+## Computer operator console
+
+After building the sidecar, select an explicit public Mobile module:
+
+```powershell
+npm run operator -- --mobile-module C:/path/to/runtime/node_modules/dsh-mobile/lib/index.mjs --executable C:/path/to/dsh-mobile-iroh-host.exe
+```
+
+The console listens only on `127.0.0.1`; it is not a public admin endpoint. Enter the current loopback DSH authorization URL, start the host, and generate a QR. The full authorization URL remains in process memory and must be supplied again after restarting the operator. Non-secret origin, stable local port and local-only testing preference persist separately. Never post the console's login fragment or pairing QR in an issue.
+
+State defaults to `.dsh-mobile-iroh` under the user home; `--data-dir` selects another private directory. `--no-open` prints the single-use login URL only to an interactive terminal. Ctrl-C closes owned runtime resources without deleting pairings; closing the browser tab does not stop a connected phone. See [operator details](operator/README.md).
+
+Extensions require an explicit provider or `--extensions-dir`. The console does not copy installed extensions from a normal DSH profile or supply its in-process Core services. Extensions needing those services require explicit adaptation; this is not an all-plugin compatibility promise.
+
 The [Android app](apps/mobile/README.md) uses the separate ID `io.github.sayach.dshmobileiroh`. Native builds explicitly opt in with `-PirohNative=true` and currently contain arm64-v8a/x86_64 only; this is not an all-device replacement for the production app.
 
-The computer side currently exposes an in-process operator API and isolated acceptance scripts. A developer must wire it and provide TLS material; an ordinary-user desktop pairing GUI and automatic certificate setup are not implemented.
+The embedded operator API uses the native preference store and `restore()` to honor the saved choice across Host owners. `start()` explicitly enables, `stop()` durably disables, and `close()` unloads without deleting identity or pairings. The console never auto-starts without current authorization. See [operator wiring](CONTRIBUTING.md#host-startup-preferences).
 
 ## Limits and attribution
 

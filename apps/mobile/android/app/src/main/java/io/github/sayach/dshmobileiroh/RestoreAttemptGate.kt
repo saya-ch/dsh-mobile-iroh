@@ -35,6 +35,16 @@ internal class RestoreAttemptGate {
         if (isCurrent(expectedGeneration)) operation()
     }
 
+    /** Carrier results continue the same connection deadline only while both owners remain current. */
+    fun connectionCallback(
+        expectedGeneration: Int,
+        connections: ConnectionAttemptController,
+        connection: ConnectionAttemptController.Attempt,
+        operation: () -> Unit,
+    ): Runnable = callback(expectedGeneration) {
+        if (connections.isCurrent(connection)) operation()
+    }
+
     /** Only the current queued retry can release its slot or start another network attempt. */
     fun retryCallback(operation: () -> Unit): Runnable {
         val expectedGeneration = generation
