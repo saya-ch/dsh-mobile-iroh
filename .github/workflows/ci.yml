@@ -34,6 +34,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - run: npm ci --ignore-scripts
+      - name: Install the package manager used by DSH profile installation
+        run: npm install --global pnpm@10.10.0
+      - run: pnpm --version
       - run: npm test
       - run: npm run check:docs
       - run: cargo fmt --all -- --check
