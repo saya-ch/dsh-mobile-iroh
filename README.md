@@ -28,6 +28,7 @@
 > DSH Mobile iroh 是 [DSH Mobile](https://github.com/saya-ch/dsh-mobile) 的独立实验项目，不是 DeepSeek 官方产品。
 >
 > **当前版本：0.1.0-alpha.1（测试通道）。** 电脑端使用 npm `alpha` 通道，Android App 提供独立正式签名的 Release 构建；初版仍处于测试阶段。
+> npm 首次发布额外附带了 `latest` 标签，因此不带标签安装目前也会取到 alpha，并不代表已有稳定版。请显式安装 `dsh-mobile-iroh@alpha`。
 >
 > 插件与 App 独立编号、独立发布。独立 App 不覆盖原 DSH Mobile，也不会自动迁移原 App 的配对数据。
 
@@ -55,7 +56,7 @@
 ### 1. 准备电脑与手机
 
 - 电脑使用官方 DSH Desktop 或 DSH Web，并安装、启用 **dsh-mobile 0.6.16**。
-- 本测试版电脑端支持 **Windows x64、Linux x64**，npm 包内附原生传输程序，不需要用户安装 Rust。
+- 本测试版电脑端支持 **Windows x64、Linux x64（glibc）**，npm 包内附原生传输程序，不需要用户安装 Rust；不包含 Alpine／musl 构建。
 - 手机使用 **Android 10 及以上**，当前 APK 包含 arm64-v8a、x86_64；32 位设备暂不支持。
 
 主 Mobile 插件负责提供移动前端，不要求你为 iroh 另开它的局域网或远程通道。iroh 使用独立的启停状态、证书和配对记录。

@@ -2,6 +2,25 @@
 
 This records the independent iroh implementation and its release checks. The main DSH Mobile source and DSH Core remain separate. Installed-package, official Desktop, physical Android and public-artifact outcomes are recorded individually.
 
+## Public distribution — 2026-10-23
+
+Both independent releases use the tested source `c9422b77dce941c9be14792ac7426d99c0bdd210`. [CI run 39928413849](https://github.com/saya-ch/dsh-mobile-iroh/actions/runs/39928413849) completed all six Windows, Ubuntu, Android, tarball and installed-runtime jobs successfully. Main merge `43ac5a3` preserves the previously merged history and has the identical Git tree `7005a3868e7a349510f438d1f3c6a294b71147f9`.
+
+| Public artifact | SHA-256 | Verification |
+| --- | --- | --- |
+| `dsh-mobile-iroh@0.1.0-alpha.1` | `fedf5ad1cb2f72d51862b4883d8560d98e3d2d7cc2ba19a1b48c2ee3b15c7234` | The unchanged 36-file CI tarball was installed into a fresh Windows directory with scripts disabled. Its native checksum, private TLS, health 200, pairing cancellation and cleanup passed without model requests. Public registry integrity and downloaded tarball bytes match it. |
+| Android `0.1.0-alpha.1`, build 1 | `5aa9a34131493b2cfa75cdfb07d1b7022a8226eb86cd0d2fa50c7314e336bad2` | The accepted non-debuggable, independently signed APK was uploaded unchanged to `android-v0.1.0-alpha.1`. A fresh GitHub download matches the tested hash and pinned signer. |
+
+npm initially exposed a `0.0.0-stage` placeholder, then the actual alpha with both `alpha` and `latest` aliases despite `--tag alpha`. The authenticated latest-removal request returned 400, matching [the reported first-publication behavior](https://github.com/npm/cli/issues/8490). The original default verifier correctly rejected this channel state. The post-publication maintenance verifier adds an explicit, tightly limited `--allow-initial-latest` exception for this first version, retaining registry URL, maintainer, version set, alpha publish configuration, integrity and actual download checks. It reports the aliases; it does not claim the package is alpha-only or stable. No published bytes, versions or source tags were replaced.
+
+The exact final CI tarball was also installed by the official Desktop's own bundled CLI into the private test home. Its one companion component and General settings manager ran successfully. One saved-device attempt timed out after the full application/package restart; an explicit retry connected without re-pairing. A newly created `iroh-ci-package-proof` Workspace appeared on the release App and its unsent draft remained present. This preserves the observed transient failure rather than claiming uninterrupted public-network recovery.
+
+That test profile was subsequently installed from the public registry using exact `dsh-mobile-iroh@0.1.0-alpha.1`, replacing its local-file dependency. The official application was restarted with the same private home and no remote-debugging flag. The post-publication verifier and documentation changes are maintenance-only; the complete Node suite has 222 passes and the one declared Windows symlink-privilege skip, with relative documentation checks passing. They do not replace or rename the earlier candidate CI result.
+
+The independently signed App and original Mobile packages remain installed; no original data was cleared. Temporary WebView forwarding was removed and the phone's USB stay-awake setting was restored. The daily Desktop profile was not changed: its quit confirmation was cancelled. The official application's separate test home retains the accepted pairing and owned fixture Workspaces.
+
+The final Linux Host is an x86_64 glibc-linked ELF with interpreter `/lib64/ld-linux-x86-64.so.2`, tested on Ubuntu 22.04, not an Alpine/musl build. The production npm dependency audit reported zero known vulnerabilities at this check; the separate RustSec snapshot and its maintenance warning below remain attached to their recorded scan.
+
 ## Installed companion and signed App — 2026-10-23
 
 The first alpha distribution uses `dsh-mobile-iroh@0.1.0-alpha.1` on npm's `alpha` channel and the independently signed Android package `io.github.sayach.dshmobileiroh`, version `0.1.0-alpha.1`, build 1. Release signing is distinct from a stable-product claim. The independent certificate SHA-256 is pinned in `apps/mobile/signing.json`; the main Mobile signer was not used.
@@ -21,7 +40,7 @@ The actual installed official Desktop executable was version **0.2.1-rc.2**. Its
 
 The earlier local install tarball hash was `1760af3e683a2e5981993f653b72d2ff9f113a806cef763006d7ecc694577675`; the locally tested signed APK hash was `f2d580edad1b2d39ad6f655f69ccc06840c1f4f837a8abd9ca79df994956546c`. Final public assets are verified separately and must not inherit these hashes after a rebuild.
 
-The preceding `2753a2e` candidate passed all six remote Windows/Linux/Android, tarball and installed-runtime jobs in CI run `39920003905`. Its predecessor's two frontend smokes failed because pnpm was missing from PATH; the fix installs the locally verified pnpm version. The later Desktop framing correction requires its own candidate run before release.
+The preceding `2753a2e` candidate passed all six remote Windows/Linux/Android, tarball and installed-runtime jobs in CI run `39920003905`. Its predecessor's two frontend smokes failed because pnpm was missing from PATH; the fix installs the locally verified pnpm version. The subsequent `c9422b7` run above covers the Desktop framing correction and complete Cookie owner.
 
 The final local follow-up has 221 passing Node tests and one Windows symlink-privilege skip with the native adapters enabled. Android has 60 JVM suites and 392 passing tests, with no failures, errors or skips; application Lint also passed. The Cookie owner serializes complete alias batches and accepted revocation cleanup by host across Activity replacement. Platform rejection never reports successful installation, and a saved pairing remains available if its Cookie write fails. Initial wiring tests still expected inline deletion strings; they were updated to check delegation to the tested deletion queue instead.
 

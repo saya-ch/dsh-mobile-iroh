@@ -28,6 +28,7 @@
 > DSH Mobile iroh is an independent experimental project related to [DSH Mobile](https://github.com/saya-ch/dsh-mobile), not an official DeepSeek product.
 >
 > **Current version: 0.1.0-alpha.1 (testing channel).** The computer plugin uses npm's `alpha` channel; Android uses an independently release-signed build. This initial version remains experimental.
+> npm also attached `latest` to this first publication, so an untagged install currently selects the alpha too. This does not make it stable. Install `dsh-mobile-iroh@alpha` explicitly.
 >
 > The plugin and App have independent version numbers and releases. This separate App does not replace the original DSH Mobile or automatically migrate its paired devices.
 
@@ -55,7 +56,7 @@ Sessions, workspaces and tools still come from DSH on the computer. This project
 ### 1. Prepare your computer and phone
 
 - Run official DSH Desktop or DSH Web on the computer, with **dsh-mobile 0.6.16** installed and enabled.
-- This test version supports **Windows x64 and Linux x64** on the computer. The npm package includes the native transport executable; users do not need Rust.
+- This test version supports **Windows x64 and Linux x64 (glibc)** on the computer. The npm package includes the native transport executable; users do not need Rust. Alpine/musl builds are not included.
 - Use **Android 10 or later**. The current APK includes arm64-v8a and x86_64; 32-bit devices are not supported.
 
 The main Mobile plugin supplies the mobile frontend. You do not need to enable its LAN or remote channel separately for iroh. iroh has independent startup preferences, certificates and pairing records.
