@@ -2,10 +2,6 @@
   <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/repository-hero.png" alt="DSH Mobile iroh: encrypted direct or relay access to DSH" width="100%">
 </p>
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/apps/mobile/store/android/icon-512.png" alt="DSH Mobile iroh App icon" width="88" height="88">
-</p>
-
 <h1 align="center">DSH Mobile iroh</h1>
 
 <p align="center">Keep using DeepSeek Harness on your computer through an encrypted direct or relayed phone connection.</p>
@@ -37,6 +33,7 @@
 > The plugin and App have independent version numbers and releases. This separate App does not replace the original DSH Mobile or automatically migrate its paired devices.
 
 <p align="center">
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/app-icon-rounded.svg" alt="DSH Mobile iroh Android app icon" width="72" height="72"></a><br>
   <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><strong>Download Android App 0.1.0-alpha.1</strong></a><br>
   <sub><a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/tag/android-v0.1.0-alpha.1">Release notes and checksums</a></sub>
 </p>

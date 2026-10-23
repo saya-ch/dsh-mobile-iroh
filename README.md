@@ -2,10 +2,6 @@
   <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/repository-hero.png" alt="DSH Mobile iroh：加密直连或中继访问 DSH" width="100%">
 </p>
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/apps/mobile/store/android/icon-512.png" alt="DSH Mobile iroh App 图标" width="88" height="88">
-</p>
-
 <h1 align="center">DSH Mobile iroh</h1>
 
 <p align="center">让手机通过加密直连或中继，继续使用电脑上的 DeepSeek Harness。</p>
@@ -37,6 +33,7 @@
 > 插件与 App 独立编号、独立发布。独立 App 不覆盖原 DSH Mobile，也不会自动迁移原 App 的配对数据。
 
 <p align="center">
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/app-icon-rounded.svg" alt="DSH Mobile iroh 安卓应用图标" width="72" height="72"></a><br>
   <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><strong>下载 Android App 0.1.0-alpha.1</strong></a><br>
   <sub><a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/tag/android-v0.1.0-alpha.1">版本说明与校验文件</a></sub>
 </p>
