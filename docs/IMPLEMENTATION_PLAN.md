@@ -21,12 +21,14 @@ This plan tracks the independent implementation. It does not authorize publicati
 15. Current public Mobile 0.6.16 frontend model selection, actual ZIP content, per-device module rules and real runtime/operator checks with zero model requests.
 16. Pre-device local Node 179, Windows Rust 80, actual Linux 79 and Android JVM 371 checks; native Debug/unsigned R8 Release and optimized Windows Host built. Security trust dependencies updated and 412-package license declarations inventoried, without hiding the remaining maintenance warning.
 17. Android 16 cellular pairing, real DSH resource/API loading, saved-device reconnect, cancellation, system Back and targeted online revocation observed in an isolated physical-device setup. This exposed an Android ICU parser crash and a recovery-budget issue; final checks and remaining coverage are tracked in VERIFICATION.
+18. Installable companion bundle with a public General settings entry, current-Host authorization, strict streamed Desktop launch requests, independent operator ownership and no duplicate Mobile service registration.
+19. Versioned Windows/Linux native package inventory, exact tarball checks and real installed-package smoke; independently pinned Android release signer and complete native/Maven distribution notices.
 
 ## Active acceptance work
 
 - Complete final-package recovery-budget checks and the remaining physical native-enabled App scenarios; retain the already observed checks separately.
 - Keep unverified deployment/ABI/signing conditions explicit rather than treating a lower-layer test as product acceptance.
-- Keep exact-candidate local source/build receipts, original failures and bounded public-network observations alongside final results; remote CI is still a separate authorized step.
+- Keep source/build receipts, original failures and bounded public-network observations alongside the final release checks; Windows/Linux/Android CI and official Desktop installation are recorded for each candidate.
 - Public EndpointId discovery and relay reconnect remain topology-dependent; a forced-relay initial success and a later discovery failure are separate results, not an overall reliability pass.
 
 ## Required before production integration

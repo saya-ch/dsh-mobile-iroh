@@ -22,15 +22,17 @@ test('local Web and authenticated Desktop actions are accepted without trusting 
   assert.doesNotThrow(() => assertLaunchRequest(localhost,origin,accepted))
   const desktop = request(); delete desktop.headers.origin; delete desktop.headers['sec-fetch-site']; desktop.headers['x-dsh-iroh-admin'] = 'dsh-app://app'
   assert.doesNotThrow(() => assertLaunchRequest(desktop,origin,accepted))
+  desktop.headers['transfer-encoding'] = 'chunked'
+  assert.doesNotThrow(() => assertLaunchRequest(desktop,origin,accepted))
   for (const connection of [undefined,{ requestRejection:() => 401 },{ requestRejection:() => 403 }]) {
     assert.throws(() => assertLaunchRequest(desktop,origin,connection),{ code:'iroh_admin_rejected' })
   }
 })
 test('cross origin, hostile authority, non-loopback, duplicate headers and simple forms fail before effects',() => {
-  for (const patch of [{ method:'GET' },{ method:'OPTIONS' },{ url:LAUNCH_PATH+'?token=x' },{ socket:{ remoteAddress:'192.168.0.3' } },{ rawHeaders:['Host','a','Host','b'] }]) {
+  for (const patch of [{ method:'GET' },{ method:'OPTIONS' },{ url:LAUNCH_PATH+'?token=x' },{ socket:{ remoteAddress:'192.168.0.3' } },{ rawHeaders:['Host','a','Host','b'] },{ rawHeaders:['Transfer-Encoding','chunked','Transfer-Encoding','chunked'] }]) {
     assert.throws(() => assertLaunchRequest(request(patch),origin,accepted),{ code:'iroh_admin_rejected' })
   }
-  for (const patch of [{ origin:'http://evil.invalid' },{ host:'localhost:9555' },{ host:'localhost:9556' },{ host:'user:secret@127.0.0.1:9555' },{ 'sec-fetch-site':'cross-site' },{ 'content-type':'text/plain' },{ 'content-encoding':'gzip' },{ 'transfer-encoding':'chunked' },{ 'x-dsh-iroh-admin':undefined },{ 'x-dsh-iroh-admin':'dsh-app://app' }]) {
+  for (const patch of [{ origin:'http://evil.invalid' },{ host:'localhost:9555' },{ host:'localhost:9556' },{ host:'user:secret@127.0.0.1:9555' },{ 'sec-fetch-site':'cross-site' },{ 'content-type':'text/plain' },{ 'content-encoding':'gzip' },{ 'transfer-encoding':'gzip, chunked' },{ 'transfer-encoding':'chunked','content-length':'13' },{ 'x-dsh-iroh-admin':undefined },{ 'x-dsh-iroh-admin':'dsh-app://app' }]) {
     const candidate = request(); Object.assign(candidate.headers,patch)
     assert.throws(() => assertLaunchRequest(candidate,origin,accepted),{ code:'iroh_admin_rejected' })
   }

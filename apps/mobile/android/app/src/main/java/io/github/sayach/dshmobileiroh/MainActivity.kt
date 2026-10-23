@@ -1478,7 +1478,14 @@ class MainActivity : Activity() {
                             ?: run { failed(); return@runOnUiThread }
                         input.text.clear()
                         installNativeSession(descriptor.binding.origin, session,
-                            isCurrent = { connectionAttempts.isCurrent(attempt) && generation == pairingGeneration }) {
+                            isCurrent = { connectionAttempts.isCurrent(attempt) && generation == pairingGeneration },
+                            onFailure = {
+                                stopIrohTransport()
+                                finishConnectionAttempt(attempt)
+                                pairingAttemptGate.complete(generation)
+                                showDeviceList()
+                                toastError(R.string.session_storage_failed)
+                            }) {
                             pairingAttemptGate.complete(generation)
                             if (existing) showBrowser(descriptor.binding.origin, descriptor.caCertificate)
                             else {
@@ -1745,16 +1752,17 @@ class MainActivity : Activity() {
             onTerminal = { owner, status ->
                 when (status) {
                     IrohTransportStatus.REVOKED -> {
-                        val cookies = CookieManager.getInstance()
-                        val names = listOf("dsh_ma_session", "dsh_ma_csrf", "__Host-dsh_ma_session", "__Host-dsh_ma_csrf")
-                        val left = java.util.concurrent.atomic.AtomicInteger(names.size)
-                        for (name in names) cookies.setCookie(owner.carrier.endpoint.origin.serialized,
-                            "$name=; Max-Age=0; Path=/; Secure; SameSite=Strict") {
-                            if (left.decrementAndGet() == 0) cookies.flush()
-                        }
+                        val origin = owner.carrier.endpoint.origin
                         stopIrohTransport()
                         cancelAutomaticRecovery()
                         handleDeviceRevoked()
+                        (application as MobileApplication).sessionCookieInstaller.clear(
+                            key = origin.host,
+                            cookies = nativeSessionCookieDeletions().map { NativeSessionCookieWrite(origin.serialized, it) },
+                            onFailure = {
+                                if (!isFinishing && !isDestroyed) toastError(R.string.session_storage_failed)
+                            },
+                        )
                     }
                     IrohTransportStatus.DISCONNECTED, IrohTransportStatus.INACTIVE -> {
                         stopIrohTransport()
@@ -2098,6 +2106,12 @@ class MainActivity : Activity() {
                                 origin = origin,
                                 session = renewed,
                                 isCurrent = { generation == pairingGeneration && accessMode == mode && connectionAttempts.isCurrent(attempt) },
+                                onFailure = {
+                                    status.setTextColor(getColor(R.color.app_error))
+                                    status.setText(R.string.session_storage_failed)
+                                    completePairingAttempt(generation)
+                                    button.isEnabled = true
+                                },
                             ) {
                                 pairingAttemptGate.complete(generation)
                                 showBrowser(origin, existingCredential.caCertificate)
@@ -2168,6 +2182,12 @@ class MainActivity : Activity() {
                             origin = origin,
                             session = session,
                             isCurrent = { generation == pairingGeneration && accessMode == mode && connectionAttempts.isCurrent(attempt) },
+                            onFailure = {
+                                status.setTextColor(getColor(R.color.app_error))
+                                status.setText(R.string.session_storage_failed)
+                                completePairingAttempt(generation)
+                                button.isEnabled = true
+                            },
                         ) {
                             pairingAttemptGate.complete(generation)
                             if (record.displayName == localizedDefaultDeviceName(record.mode)) {
@@ -2411,24 +2431,17 @@ class MainActivity : Activity() {
         origin: GatewayOrigin,
         session: NativeSession,
         isCurrent: () -> Boolean = { true },
+        onFailure: () -> Unit,
         complete: () -> Unit,
     ) {
         if (!isCurrent() || session.origin != origin) return
-        val cookies = CookieManager.getInstance()
-        val aliases = nativeSessionCookies(session)
-        fun installAlias(index: Int) {
-            if (!isCurrent()) return
-            if (index == aliases.size) {
-                cookies.flush()
-                complete()
-                return
-            }
-            cookies.setCookie(origin.serialized, aliases[index]) {
-                if (!isCurrent()) return@setCookie
-                installAlias(index + 1)
-            }
-        }
-        installAlias(0)
+        (application as MobileApplication).sessionCookieInstaller.install(
+            key = origin.host,
+            cookies = nativeSessionCookies(session).map { NativeSessionCookieWrite(origin.serialized, it) },
+            isCurrent = { !isFinishing && !isDestroyed && isCurrent() },
+            onFailure = onFailure,
+            complete = complete,
+        )
     }
 
     private fun savePairedDevice(
@@ -2789,6 +2802,10 @@ class MainActivity : Activity() {
                             origin = selectedOrigin,
                             session = renewed,
                             isCurrent = { restoreAttemptGate.isCurrent(generation) && connectionAttempts.isCurrent(attempt) },
+                            onFailure = {
+                                toastError(R.string.session_storage_failed)
+                                onFailure(RestoreFailureDisposition.REQUIRE_USER_ACTION)
+                            },
                         ) {
                             if (preserveWebView == null) {
                                 failureDialog?.dismiss()

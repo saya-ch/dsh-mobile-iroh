@@ -59,7 +59,7 @@ class IrohActivityWiringTest {
     fun allNewUserFacingPairingStringsExistAcrossTheThreeLocales() {
         val keys = setOf("iroh_access_title", "iroh_access_description", "iroh_pairing_help", "iroh_pairing_label",
             "iroh_pairing_hint", "iroh_pairing_private", "iroh_pairing_invalid", "iroh_pairing_retry_new",
-            "connection_mode_iroh", "iroh_status_connect_to_check", "iroh_connect_action")
+            "connection_mode_iroh", "iroh_status_connect_to_check", "iroh_connect_action", "session_storage_failed")
         for (locale in listOf("values", "values-zh-rCN", "values-it")) {
             val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file("res/$locale/strings.xml"))
             val strings = document.getElementsByTagName("string")
@@ -72,7 +72,7 @@ class IrohActivityWiringTest {
     fun foregroundRevocationMonitorKeepsTheRowButStopsReconnectAndClearsOnlyThisSession() {
         val source = file("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
         val monitor = source.substringAfter("private val irohStatusMonitor by lazy").substringBefore("private fun warnIfTailscale(")
-        for (check in listOf("IrohStatusMonitor<IrohStatusOwner>", "activityResumed", "currentDocumentGeneration", "activeIroh === owner.carrier", "webView === owner.browser", "IrohTransportStatus.REVOKED", "stopIrohTransport()", "cancelAutomaticRecovery()", "handleDeviceRevoked()", "Max-Age=0")) {
+        for (check in listOf("IrohStatusMonitor<IrohStatusOwner>", "activityResumed", "currentDocumentGeneration", "activeIroh === owner.carrier", "webView === owner.browser", "IrohTransportStatus.REVOKED", "stopIrohTransport()", "cancelAutomaticRecovery()", "handleDeviceRevoked()", "sessionCookieInstaller.clear(", "nativeSessionCookieDeletions()", "key = origin.host")) {
             assertTrue("Monitor missing $check", monitor.contains(check))
         }
         assertFalse(monitor.contains("removeAllCookies"))
@@ -80,6 +80,22 @@ class IrohActivityWiringTest {
         assertTrue(source.substringAfter("override fun onPause()").substringBefore("override fun onDestroy()").contains("stopIrohStatusMonitor()"))
         assertTrue(source.contains("private fun stopIrohStatusMonitor() = irohStatusMonitor.stop()"))
         assertTrue(source.contains("private fun startIrohStatusMonitor() = irohStatusMonitor.start()"))
+    }
+
+    @Test
+    fun sessionWritesUseTheApplicationQueueAndSavedPairingSurvivesPlatformFailure() {
+        val source = file("java/io/github/sayach/dshmobileiroh/MainActivity.kt").readText()
+        val install = source.substringAfter("private fun installNativeSession(").substringBefore("private fun savePairedDevice(")
+        assertTrue(install.contains("(application as MobileApplication).sessionCookieInstaller.install("))
+        assertTrue(install.contains("key = origin.host"))
+        assertTrue(install.contains("!isFinishing && !isDestroyed && isCurrent()"))
+        assertTrue(install.contains("onFailure = onFailure"))
+        assertFalse(install.contains("setCookie("))
+        val pairing = source.substringAfter("installNativeSession(descriptor.binding.origin, session,")
+            .substringAfter("onFailure = {").substringBefore("}) {")
+        assertTrue(pairing.contains("showDeviceList()"))
+        assertTrue(pairing.contains("toastError(R.string.session_storage_failed)"))
+        assertFalse(pairing.contains("failed()"))
     }
 
     @Test

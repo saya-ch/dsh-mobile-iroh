@@ -1,6 +1,6 @@
 # Development and validation
 
-Read [AGENTS.md](AGENTS.md), keep work in this independent repository, and leave DSH Core, the main DSH Mobile checkout and installed profiles unchanged. Preserve pairings, contribution history and imported licenses.
+Read [AGENTS.md](AGENTS.md), keep source work in this independent repository, and leave DSH Core and the main DSH Mobile checkout unchanged. Use owned isolated profiles for automated tests; changing a user's installed profile or restarting their Desktop requires explicit authorization. Preserve pairings, contribution history and imported licenses.
 
 ## Source checks
 
@@ -99,4 +99,25 @@ The TLS smoke exercises the actual public Gateway through QUIC, CA/name rejectio
 
 [CI](.github/workflows/ci.yml) defines Windows/Linux and native Android jobs. A workflow file is not a passing run. Keep source checks, built artifacts, local QUIC, Android/JNI, physical devices and public topology distinct.
 
-This repository is unpublished. Do not push, tag, publish npm/APK, change the main plugin or promote a signer/download descriptor unless that action is explicitly authorized. Production integration additionally requires the acceptance gates in [INTEGRATION_SEAM](docs/INTEGRATION_SEAM.md).
+The installable companion and its independent App have separate release paths. Do not push, tag, publish npm/APK, change the main plugin or promote a signer/download descriptor unless that action is explicitly authorized. Integration into the main DSH Mobile project additionally requires the acceptance gates in [INTEGRATION_SEAM](docs/INTEGRATION_SEAM.md); publishing this independent alpha does not complete that integration.
+
+### Installed companion acceptance
+
+The package's [bundle patch](cordis.patch.yml) adds only `dsh-mobile-iroh`. It depends on the current profile's enabled main Mobile plugin for the frontend, without overriding its directory picker, remote channel or extension service. Use `dsh-mobile 0.6.16` for the current candidate. Native Host executables are selected from the package's hash-pinned manifest; the profile supplies the declared DSH/Cordis peers.
+
+Build with `npm run build:client` before packing. The Client export must resolve to the generated `lib/client.js` factory, not the ESM source. With the isolated public runtime configured, run `node plugin/smoke-client-registry.mjs <installed-package-directory>` against the actual installed tarball to verify DSH's selected export and executable startup batch. Run `node plugin/smoke-managed-ui.mjs` for the automatic-Host management form; wire tests in `plugin/desktop-wire.test.mjs` cover official Desktop's streamed forwarding separately from ordinary browser POSTs.
+
+For official Desktop acceptance, install the tested tarball through its supported plugin manager in an owned Desktop profile, restart normally if requested, and open **Settings → General → DSH Mobile iroh → Open manager**. Verify the loaded package/client bytes and native child ownership, then pair the independent App. Do not substitute a separate `dsh web` instance for this Desktop check or modify an unrelated profile. Record actual phone resources/API and network observations; a visible QR, local `ready` state or successful install alone is insufficient. No model request is required for this transport acceptance.
+
+### Authorized release paths
+
+Tag pushes do not publish anything. The [release workflow](.github/workflows/release.yml) runs only when explicitly dispatched against an existing version tag; it rechecks that exact source and retains the repository, version and signer gates:
+
+```powershell
+gh workflow run release.yml --repo saya-ch/dsh-mobile-iroh --ref npm-v0.1.0-alpha.1
+gh workflow run release.yml --repo saya-ch/dsh-mobile-iroh --ref android-v0.1.0-alpha.1
+```
+
+The npm workflow requires this repository's own publishing authorization (`DSH_IROH_NPM_TOKEN` or a configured trusted publisher). Local `npm login` does not authorize GitHub Actions. When publishing locally, download the successful exact-candidate CI tarball, verify its SHA256, complete installed Desktop acceptance and publish that unchanged file with `npm publish <tested-tarball> --tag alpha --access public --ignore-scripts`. Run `node scripts/verify-published-npm.mjs <absolute-tested-tarball> <version>` afterward. For an independently accepted signed APK, create the matching `android-v...` GitHub Release and upload the same verified APK, checksum and notices; do not rebuild it between acceptance and upload. Keep product-alpha releases marked prerelease and do not move `latest`.
+
+Keep the independent Android keystore and its recovery backup outside the repository. [signing.json](apps/mobile/signing.json) pins its public certificate; it contains no signing secret. GitHub uses only `DSH_IROH_ANDROID_KEYSTORE_BASE64`, `DSH_IROH_ANDROID_KEYSTORE_PASSWORD`, `DSH_IROH_ANDROID_KEY_ALIAS` and `DSH_IROH_ANDROID_KEY_PASSWORD`. Never reuse the original DSH Mobile key, replace a lost signer silently, or uninstall a user's existing app to hide a signature mismatch. Verify each downloaded published APK with `apksigner verify --verbose --print-certs` and [the independent signer gate](scripts/verify-android-release.mjs).

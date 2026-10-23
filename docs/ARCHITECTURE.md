@@ -32,6 +32,7 @@ The full EndpointId is encoded as two DNS labels under `.iroh.localhost`. A stab
 | JS sidecar supervisor | Child process, bounded stdio, readiness, stop and failure cleanup | Unauthenticated admin HTTP or model-visible pairing tools |
 | Trusted host session | Identity resolution, Gateway/controller composition, serialized operator commands and injected preferences | Discovering a user's production profile or changing main-plugin providers |
 | Independent operator | Loopback-only authenticated console, native non-secret settings, current-process upstream authorization and ordered close | An Internet-facing admin service, secret persistence or implicit profile discovery |
+| Installed companion | Authenticated local launch route, General settings entry, packaged native resolver and an operator bound to the current DSH | A second `mobileAccess` service, another DSH process or automatic sharing of main-plugin extension resources |
 | Native TLS manager | Persistent CA, exact-name leaf, atomic recovery journal and a writer lease held through Gateway activation | Installing a system CA or replacing corrupt credentials |
 | Optional extension host | Public Mobile service in its own Cordis Context, explicit providers/local directory and ordered disposal | Automatic access to another DSH process's live services or all installed extensions |
 | Mobile Gateway | Device tokens, sessions, CA-backed HTTPS, Host/Origin, CSRF and WSS route policy | iroh peer identity or automatic transport/device-ID association |
@@ -57,5 +58,7 @@ The independent console owns its HTTP server, not the user's DSH process. A sing
 ## Integration and acceptance
 
 Main DSH Mobile currently has a closed provider set. [The integration design](INTEGRATION_SEAM.md) identifies the changes that require a separate main-repository review: provider registration, lifecycle/admin UI, device-revocation association, Android metadata, ABI support and signing. The independent operator API and factory do not mean these changes are already integrated.
+
+The companion installs as its own bundle entry. Its public settings action opens a numeric-loopback operator after authenticating with the current DSH connection service. The main Mobile service is only an availability dependency for the mobile frontend; the operator owns a separate extension Context. A single disposer stops route admission, drains admitted work, then closes its operator and transport owners. Native Windows/Linux files are bundled and checked against a versioned size/SHA-256 manifest before execution.
 
 [VERIFICATION](../VERIFICATION.md) records executed gates and their limits. Local QUIC, a real public Gateway package, desktop Chromium, Java HTTPS, JVM tests, Android compilation and physical-device/network tests are different evidence. CI definitions are not passing remote CI runs.

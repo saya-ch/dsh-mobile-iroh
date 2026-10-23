@@ -74,6 +74,7 @@
     <string name="connection_stop_reconnecting">Stop reconnecting</string>
     <string name="connection_timed_out">This connection timed out. Retry or choose another computer.</string>
     <string name="connection_failed">Could not connect to this computer. Retry, check its status again, or choose another computer.</string>
+    <string name="session_storage_failed">Could not update this computer\'s web session on the device. Reopen the computer from the device list; do not delete the pairing.</string>
     <string name="connection_cancelled">Connection cancelled.</string>
     <string name="reconnect_stopped">Automatic reconnection stopped.</string>
     <string name="secure_connection_failed">Secure connection failed</string>

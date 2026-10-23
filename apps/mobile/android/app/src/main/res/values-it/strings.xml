@@ -75,6 +75,7 @@
     <string name="connection_stop_reconnecting">Interrompi riconnessione</string>
     <string name="connection_timed_out">Tempo di connessione scaduto. Riprova o scegli un altro computer.</string>
     <string name="connection_failed">Impossibile connettersi a questo computer. Riprova, verifica di nuovo lo stato o scegli un altro computer.</string>
+    <string name="session_storage_failed">Impossibile aggiornare la sessione web sul dispositivo. Riapri il computer dall\'elenco dei dispositivi senza eliminare l\'associazione.</string>
     <string name="connection_cancelled">Connessione annullata.</string>
     <string name="reconnect_stopped">Riconnessione automatica interrotta.</string>
     <string name="secure_connection_failed">Connessione sicura non riuscita</string>

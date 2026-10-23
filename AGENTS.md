@@ -5,8 +5,10 @@ iroh transport, sidecar, protocol, and client work in this repository until a
 stable integration seam is deliberately upstreamed to `dsh-mobile`.
 
 Do not modify `C:\develop\dsh-mobile` or `C:\develop\deepseek-harness` while
-working here. Read those repositories to compare contracts, but treat their
-source, installed profiles, and frontend artifacts as read-only.
+working here. Read those repositories to compare contracts; their source and
+bundled frontend artifacts remain read-only. Change an installed profile only
+for explicitly authorized installation or upgrade work, after preserving its
+configuration and completing the application's normal shutdown.
 
 Do not claim production support from a local PoC, one successful network run,
 an external sidecar, or a unit test. Separate protocol tests, host loopback

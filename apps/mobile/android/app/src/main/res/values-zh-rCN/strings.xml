@@ -73,6 +73,7 @@
     <string name="connection_stop_reconnecting">停止重连</string>
     <string name="connection_timed_out">本次连接超时。可重试或选择其他电脑。</string>
     <string name="connection_failed">无法连接到这台电脑。请重试、重新检测或选择其他电脑。</string>
+    <string name="session_storage_failed">无法更新本机保存的网页会话。请从设备列表重新进入这台电脑，无需删除配对。</string>
     <string name="connection_cancelled">已取消连接。</string>
     <string name="reconnect_stopped">已停止自动重连。</string>
     <string name="secure_connection_failed">安全连接失败</string>

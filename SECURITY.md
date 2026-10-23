@@ -1,6 +1,6 @@
 # Security
 
-This is an unpublished experiment. Report suspected security defects privately through the repository's GitHub security channel when available; do not post keys, QR descriptors, device tokens or user conversations in public issues.
+This is an experimental companion distributed through an npm alpha channel and an independently signed Android package. Report suspected security defects privately through the repository's GitHub security channel when available; do not post keys, QR descriptors, device tokens or user conversations in public issues.
 
 ## Trust and authorization
 
@@ -30,7 +30,9 @@ Transport-peer revocation closes that iroh connection. Mobile device revocation 
 
 The independent browser console binds numeric IPv4 loopback only. Its one-use launch fragment expires, becomes an HttpOnly/SameSite session with CSRF protection, and is omitted from redirected CLI output. Exact Host/Origin, bounded flat JSON, duplicate fields/headers and unsupported routes are checked. Local users/processes able to read the launch URL or the browser session remain trusted; this is not multi-user administrative isolation.
 
-The full DSH authorized URL remains in process memory. Only its non-secret Origin, stable local port and local-only option are written to fixed native configuration. A fresh process never silently discovers a production profile or resumes using an old authorization URL. Closing the console page cancels a displayed QR but does not stop existing phones. Transport-peer management is labelled separately from Mobile device-token management.
+The full DSH authorized URL remains in process memory. Only its non-secret Origin, stable local port and local-only option are written to fixed native configuration. The installed companion obtains fresh authorization from the current DSH's public connection service; the standalone CLI requires explicit authorization. Neither resumes using a persisted token or discovers another profile. Closing the console page cancels a displayed QR but does not stop existing phones. Transport-peer management is labelled separately from Mobile device-token management.
+
+The installed management-launch route also requires DSH authentication, an actual loopback peer, an admitted Host/Origin and the local application's non-simple request marker. Desktop's streamed JSON POST may use a single chunked transfer encoding without Content-Length; its decoded body still has a 64-byte limit. Ambiguous framing and unauthenticated requests are rejected.
 
 The native TLS owner creates its CA and leaf inside private state. It validates keys, signatures, exact SAN, expiry, permissions and the atomic recovery journal; corrupt/unknown state fails closed rather than receiving a new CA. A bounded writer lease remains held through Gateway activation/refresh. Renewal uses the public Mobile refresh method and leaves the previous live context intact on failure. It does not install a system CA, replace user certificates or send private TLS keys through control output.
 
@@ -40,4 +42,4 @@ Optional local extensions execute trusted user code in their explicitly selected
 
 The refreshed cargo-audit 0.22.2 scan uses official RustSec snapshot `640bf5a9f06e66d8721e8772766531fe77c8630d`. It first identified three certificate-trust advisories in the older lockfile. The candidate now resolves `rustls-webpki 0.103.16`, `webpki-roots 1.0.10` and `webpki-root-certs 1.0.10`, matching the published fixes for [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html), [0381](https://rustsec.org/advisories/RUSTSEC-2026-0381.html) and [0383](https://rustsec.org/advisories/RUSTSEC-2026-0383.html). The rescan matches zero known vulnerabilities and retains one unmaintained warning: `paste 1.0.15` / RUSTSEC-2024-0436 through netlink/netwatch/iroh. With `--deny warnings` it still exits 1, not green. No advisory ignore, target filter or unreviewed dependency fork was added. This snapshot result is not an absence-of-vulnerabilities guarantee.
 
-Local QUIC/TLS, automatic-renewal tests, build/JVM and restricted-token evidence do not establish cross-network NAT/relay reliability, physical Android behavior, formal signing or absence of vulnerabilities. [VERIFICATION](VERIFICATION.md) records actual checks. Production integration/publication remains gated by [the integration plan](docs/INTEGRATION_SEAM.md).
+Local QUIC/TLS, automatic-renewal tests, build/JVM and restricted-token evidence do not replace physical-device, network-topology or signed-artifact checks. [VERIFICATION](VERIFICATION.md) records those outcomes separately, including the limited official Desktop and cellular-device acceptance. Broader integration remains covered by [the integration plan](docs/INTEGRATION_SEAM.md).

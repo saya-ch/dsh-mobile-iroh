@@ -37,4 +37,15 @@ class NativeSessionCookiesTest {
             assertEquals(cookie.substringBefore('=').endsWith("session"), cookie.contains("HttpOnly"))
         }
     }
+
+    @Test
+    fun deletionTargetsEverySessionAliasButNoDeviceCredentialOrForeignDomain() {
+        val deletions = nativeSessionCookieDeletions()
+        assertEquals(nativeSessionCookies(session).map { it.substringBefore('=') }, deletions.map { it.substringBefore('=') })
+        for (cookie in deletions) {
+            assertTrue(cookie.contains("=; Max-Age=0; Path=/; Secure; SameSite=Strict"))
+            assertFalse(cookie.contains("Domain="))
+            assertFalse(cookie.contains("dsh_ma_device"))
+        }
+    }
 }

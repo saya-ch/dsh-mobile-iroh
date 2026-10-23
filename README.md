@@ -27,9 +27,14 @@
 
 > DSH Mobile iroh 是 [DSH Mobile](https://github.com/saya-ch/dsh-mobile) 的独立实验项目，不是 DeepSeek 官方产品。
 >
-> **当前候选：0.1.0-alpha.1。** npm 测试包与正式签名 APK 正在进行发布验收；下载入口在产物核验后开放。
+> **当前版本：0.1.0-alpha.1（测试通道）。** 电脑端使用 npm `alpha` 通道，Android App 提供独立正式签名的 Release 构建；初版仍处于测试阶段。
 >
 > 插件与 App 独立编号、独立发布。独立 App 不覆盖原 DSH Mobile，也不会自动迁移原 App 的配对数据。
+
+<p align="center">
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><strong>下载 Android App 0.1.0-alpha.1</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/tag/android-v0.1.0-alpha.1">版本说明与校验文件</a></sub>
+</p>
 
 它复用 DSH Mobile 的移动页面和配对体验，将手机到电脑之间的连接交给 iroh：尝试建立直接连接，无法直连时使用可用的中继。你不必先准备公网域名、端口映射或另一套 HTTPS 隧道；电脑仍需运行 DSH，双方网络也必须能访问所需的发现与中继服务。
 
@@ -71,7 +76,7 @@ dsh plugin --profile web add dsh-mobile@0.6.16 dsh-mobile-iroh@alpha
 
 ### 3. 安装独立 Android App
 
-正式签名 APK 会放在本仓库的 [Releases](https://github.com/saya-ch/dsh-mobile-iroh/releases)。请安装 **DSH Mobile iroh**，不要拿它覆盖原 DSH Mobile。
+从上方入口或本仓库 [Releases](https://github.com/saya-ch/dsh-mobile-iroh/releases) 下载正式签名 APK。请安装 **DSH Mobile iroh**，不要拿它覆盖原 DSH Mobile。
 
 本地 Debug 包与正式包签名不同，不能直接相互覆盖。以后正式版升级应使用相同发布签名；不要通过清除原 DSH Mobile 数据来处理签名冲突。
 
@@ -122,6 +127,8 @@ App 的 Mobile 凭据使用 Android Keystore 加密。iroh 长期身份密钥保
 ## 兼容性
 
 当前验收以 **官方 DSH Desktop / DSH 0.2.1-rc.2**、**dsh-mobile 0.6.16** 为基础。初版使用数值回环 HTTP 作为电脑内的 DSH 上游，手机到电脑之间仍是加密传输；不支持把任意公网 URL 当作转发目标。
+
+初版仍有恢复边界：电脑端插件热更新后，已打开页面的模块列表可能需要重新加载；长时间使用导致网页会话过期时，也可能需要从设备列表重新进入。两者都不要求重新配对。正在编辑时请先保存草稿，再重新进入。
 
 已经完成 Android 16 移动网络下的部分真实配对、页面加载、重连和撤销检查，不等于覆盖所有网络、手机或第三方插件。具体结果与待补项见 [VERIFICATION](VERIFICATION.md)。
 

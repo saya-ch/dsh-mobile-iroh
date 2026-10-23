@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased — independent experiment
+## 0.1.0-alpha.1 — 2026-10-23
 
-Nothing in this section has been published as an npm package, APK or GitHub Release.
+Initial independent testing release. The npm companion uses the `alpha` channel; Android has its own release-signed package and release tag.
+
+### Desktop companion and distribution
+
+- Install an independent DSH bundle with a General settings action that opens the local iroh manager. Bind authorization to the current Desktop/Web process without requiring a copied login Token or registering another Mobile service.
+- Accept the official Desktop's authenticated chunked JSON request while retaining strict framing, a 64-byte decoded body limit, loopback admission and request authorization.
+- Reissue short-lived management links, replace expired management sessions and preserve the standalone CLI mode.
+- Build the browser client in DSH's supported module format, verify it through the public ClientModuleRegistry and test actual installed tarballs.
+- Bundle checksum-verified Windows/Linux x64 Host executables, preserve Linux execution permissions, and include original third-party notices.
+- Establish an independent Android release signer, verify APK identity/ABIs/alignment, and include native and Maven dependency notices before signing.
 
 ### Transport and host
 
@@ -27,11 +36,13 @@ Nothing in this section has been published as an npm package, APK or GitHub Rele
 - Avoid recursive regex backtracking while validating certificate-bearing QR descriptors. Retain JSON syntax, duplicate/unknown-field, identity, CA and byte-budget rejection.
 - Escape literal JSON braces for Android's ICU regex engine so descriptor validation does not crash during initialization.
 - Keep one overall connection deadline across carrier retries, and require both restore-generation and connection ownership before processing a late result.
+- Serialize complete Session/CSRF Cookie batches by computer host across Activity replacement; withdraw stale UI completions and queue revocation cleanup after earlier writes. Report rejected platform writes instead of entering a partially authenticated page.
 
 ### Validation and integration preparation
 
 - Add real local QUIC, public Mobile Gateway, HTTP/WSS, TLS negative cases, Java HTTPS and Chromium Origin/Cookie checks without model requests or production-profile changes.
 - Add a real DSH-profile/frontend regression with public plugin installation, owned Workspace/Session, an unsent draft, observed mux disconnect/reconnect and device revocation. Pin the same-PC browser fixture to its phone bridge instead of letting IPv6 resolve directly to the host Gateway; do not treat the earlier browser-path check as QUIC evidence.
+- Exercise complete Host/Gateway recreation with persisted identities and device credentials, expired ephemeral Cookies, fresh authentication and the rejection of stale document views.
 - Exercise public Mobile 0.6.16 with actual model selection, module dependency rules, non-empty authenticated extensions and extracted Session ZIP contents while asserting zero model requests. Keep UI-layout fixtures and real runtime acceptance separate.
 - Add an optional public-discovery probe, Windows/Linux CI definitions and native Android build jobs. Public CI and physical-device acceptance remain separate from local results.
 - Add a bounded read-only lookup driver that separates DNS results from signature-verified pkarr records without logging identities, pairing secrets or raw network errors.

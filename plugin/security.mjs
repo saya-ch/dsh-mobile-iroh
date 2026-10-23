@@ -14,7 +14,7 @@ export function currentHostOrigin(webServer) {
 /** Authenticate the local non-simple action before any process or browser effect. */
 export function assertLaunchRequest(request,origin,connection) {
   if (request.method !== 'POST' || request.url !== LAUNCH_PATH || !loopback(request.socket?.remoteAddress)) throw fail('iroh_admin_rejected')
-  for (const name of ['host','origin','cookie','content-type','content-length',ADMIN_HEADER]) {
+  for (const name of ['host','origin','cookie','content-type','content-length','transfer-encoding',ADMIN_HEADER]) {
     if (request.rawHeaders?.filter((value,index) => index % 2 === 0 && value.toLowerCase() === name).length > 1) throw fail('iroh_admin_rejected')
   }
   const headers = request.headers
@@ -25,8 +25,12 @@ export function assertLaunchRequest(request,origin,connection) {
       || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) throw fail('iroh_admin_rejected')
     requestOrigin = parsed.origin
   } catch { throw fail('iroh_admin_rejected') }
+  const transferEncoding = headers['transfer-encoding']
+  // Desktop forwards a Fetch Request.body stream without a Content-Length.
+  // The decoded stream still has the same fixed 64-byte application budget.
   if (headers['content-type'] !== 'application/json'
-    || headers['content-encoding'] !== undefined || headers['transfer-encoding'] !== undefined
+    || headers['content-encoding'] !== undefined
+    || transferEncoding !== undefined && (transferEncoding !== 'chunked' || headers['content-length'] !== undefined)
     || headers['sec-fetch-site'] !== undefined && headers['sec-fetch-site'] !== 'same-origin'
     || headers.origin !== undefined && headers.origin !== requestOrigin
     || typeof connection?.requestRejection !== 'function' || connection.requestRejection(request) !== undefined) throw fail('iroh_admin_rejected')

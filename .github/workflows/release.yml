@@ -1,8 +1,7 @@
 name: Independent release
 
 on:
-  push:
-    tags: ['npm-v*', 'android-v*']
+  workflow_dispatch:
 
 permissions:
   contents: read

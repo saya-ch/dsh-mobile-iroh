@@ -27,9 +27,14 @@
 
 > DSH Mobile iroh is an independent experimental project related to [DSH Mobile](https://github.com/saya-ch/dsh-mobile), not an official DeepSeek product.
 >
-> **Current candidate: 0.1.0-alpha.1.** The npm test package and release-signed APK are undergoing release acceptance. Download links will open after artifact verification.
+> **Current version: 0.1.0-alpha.1 (testing channel).** The computer plugin uses npm's `alpha` channel; Android uses an independently release-signed build. This initial version remains experimental.
 >
 > The plugin and App have independent version numbers and releases. This separate App does not replace the original DSH Mobile or automatically migrate its paired devices.
+
+<p align="center">
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><strong>Download Android App 0.1.0-alpha.1</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/tag/android-v0.1.0-alpha.1">Release notes and checksums</a></sub>
+</p>
 
 The project reuses DSH Mobile's mobile interface and pairing experience, with iroh carrying the connection between phone and computer: it attempts a direct connection and uses an available relay when direct connectivity is unavailable. You do not need to prepare a public domain, port forwarding, or another HTTPS tunnel first. DSH must still be running on the computer, and both networks must permit access to the required discovery and relay services.
 
@@ -71,7 +76,7 @@ The manager connects to the current DSH automatically; there is no need to copy 
 
 ### 3. Install the separate Android App
 
-The release-signed APK will be available in this repository's [Releases](https://github.com/saya-ch/dsh-mobile-iroh/releases). Install **DSH Mobile iroh**, not a replacement for the original DSH Mobile.
+Download the release-signed APK using the link above or this repository's [Releases](https://github.com/saya-ch/dsh-mobile-iroh/releases). Install **DSH Mobile iroh**, not a replacement for the original DSH Mobile.
 
 Local Debug and release packages have different signers and cannot directly overwrite one another. Future release upgrades must retain the release signer. Do not clear the original DSH Mobile's data to resolve a signing conflict.
 
@@ -122,6 +127,8 @@ A successful direct connection typically avoids a relay hop, but not every NAT, 
 ## Compatibility
 
 Current acceptance uses **official DSH Desktop / DSH 0.2.1-rc.2** and **dsh-mobile 0.6.16**. This initial version uses numeric-loopback HTTP for the DSH upstream inside the computer; phone-to-computer traffic remains encrypted. Arbitrary public URLs are not supported as forwarding targets.
+
+The initial version has recovery limits: after a computer-side plugin hot update, the open page's module list may need a reload. An expired web session after extended use may also require reopening the computer from the device list. Neither requires pairing again. Save any draft before reopening.
 
 Some real pairing, page-loading, reconnection and revocation checks have completed on an Android 16 phone using a cellular network. This does not cover every network, phone or third-party plugin. See [VERIFICATION](VERIFICATION.md) for recorded results and remaining work.
 

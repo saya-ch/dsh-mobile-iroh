@@ -63,6 +63,7 @@ jobs:
           echo "DSH_IROH_DSH_BIN=$integration_runtime/node_modules/@deepseek-ai/dsh/lib/bin.js" >> "$GITHUB_ENV"
       - run: npm run smoke:gateway
       - run: npm run smoke:host-session
+      - run: npm run smoke:gateway-restart
       - run: npm run smoke:managed-tls
       - run: npm run smoke:dsh-frontend
       - run: npm run smoke:operator-ui

@@ -26,13 +26,13 @@ Keep the existing package, Keystore, paired records, startup preference, page id
 
 A saved iroh record needs its full peer identity, stable logical Origin/port and normal Mobile credential. Neither short pairing code nor the whole QR is a persistent credential. Cancel before replacing a transport; a late result must not restore an old page or close the new computer. A network error is not device revocation.
 
-The independent package `io.github.sayach.dshmobileiroh` is a development app, not a replacement release. No automatic cross-package data transfer is implemented.
+The independently signed alpha package `io.github.sayach.dshmobileiroh` is separate from the main App. No automatic cross-package data transfer is implemented; its signer and release tags remain independent.
 
 ## QR and trusted operator
 
 [Descriptor v1](../integration/pairing-descriptor.mjs) contains exactly the version/type, full endpoint identity, logical HTTPS Origin and local port, short iroh code, one-time Gateway token, public CA, CA fingerprint and expiry. It is short-lived, limited to 2200 UTF-8 bytes and validated before use. The operator smoke encodes both the actual descriptor and the byte limit as real byte-mode/M-correction QR symbols. Scanning is the user's out-of-band trust action; a self-signed certificate is not independent evidence that an untrusted QR belongs to the intended computer.
 
-Only a trusted host operator may open a pairing window. The embedded API is in-process; the independent browser console adds a numeric-loopback-only, single-use-login/session/CSRF-protected adapter, not an unauthenticated or model-visible endpoint. Main Desktop integration must reuse its own authenticated admin/CSRF policy rather than expose this console on the network. Cancelling a displayed QR replaces both one-time windows without returning their replacements; already paired phones remain connected.
+Only a trusted host operator may open a pairing window. The embedded API is in-process; the independent browser console adds a numeric-loopback-only, single-use-login/session/CSRF-protected adapter. The installed companion reuses the current Desktop/Web connection service to authenticate a local launch action and keeps upstream authorization in memory. This existing companion is distinct from a future provider merged into the main Mobile plugin. Cancelling a displayed QR replaces both one-time windows without returning their replacements; already paired phones remain connected.
 
 ## TLS and extension owners
 

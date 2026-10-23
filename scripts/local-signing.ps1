@@ -2,7 +2,10 @@ param(
     [ValidateSet('Initialize', 'Inspect', 'UploadGitHub', 'Build')]
     [string]$Action = 'Inspect',
     [string]$Keytool = 'keytool',
-    [string]$StateDirectory = (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.dsh-mobile-iroh-signing')
+    [string]$StateDirectory = (Join-Path ([Environment]::GetFolderPath('UserProfile')) '.dsh-mobile-iroh-signing'),
+    [ValidateSet('assembleRelease', 'assembleDebug')]
+    [string]$BuildTask = 'assembleRelease',
+    [string]$InitScript
 )
 
 $ErrorActionPreference = 'Stop'
@@ -158,7 +161,9 @@ if ($Action -in @('UploadGitHub', 'Build')) {
         }
         Push-Location (Join-Path $PSScriptRoot '../apps/mobile/android')
         try {
-            & ./gradlew.bat --no-daemon -PirohNative=true assembleRelease
+            $gradleArguments = @('--no-daemon', '-PirohNative=true', $BuildTask)
+            if ($InitScript) { $gradleArguments += @('--init-script', [IO.Path]::GetFullPath($InitScript)) }
+            & ./gradlew.bat @gradleArguments
             if ($LASTEXITCODE -ne 0) { throw 'Signed Android build failed.' }
         } finally {
             Pop-Location

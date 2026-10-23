@@ -46,6 +46,7 @@
     "smoke:reference": "node src/external-reference-smoke.mjs",
     "smoke:gateway": "node integration/smoke-mobile-gateway.mjs --android-core --browser --jvm",
     "smoke:host-session": "node integration/smoke-host-session.mjs",
+    "smoke:gateway-restart": "node integration/smoke-gateway-restart.mjs",
     "smoke:managed-tls": "node integration/smoke-managed-tls.mjs",
     "smoke:dsh-frontend": "node integration/smoke-dsh-frontend.mjs",
     "smoke:public-discovery": "node integration/smoke-public-discovery.mjs",
