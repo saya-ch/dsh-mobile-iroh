@@ -12,4 +12,9 @@ anyhow = "1"
 dsh-mobile-iroh-core = { path = "../tether-core" }
 iroh = "1.0.0"
 jni = "0.21"
-tokio = { version = "1", features = ["io-util", "net", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Matches reqwest's Android verifier and its supported JNI initialization API.
+jni-verifier = { package = "jni", version = "0.22.4" }
+rustls-platform-verifier = "0.7.1"

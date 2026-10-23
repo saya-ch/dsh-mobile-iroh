@@ -44,6 +44,37 @@ private class JvmCredentialEncryption : CredentialEncryption {
 }
 
 class CredentialStorageRegressionTest {
+    @Test fun irohMetadataAndPinnedCredentialsRoundTripWithoutReplacingHttpsRows() {
+        val preferences = MemoryCredentialPreferences()
+        val store = PairedDeviceStore(preferences, JvmCredentialEncryption())
+        val instance = TestCertificates.instanceIdOf(TestCertificates.ingressCa)
+        val https = record().copy(instanceId = instance)
+        val binding = IrohDeviceBinding("a".repeat(64), 25443)
+        val iroh = https.copy(origin = binding.origin, caCertificate = TestCertificates.ingressCa, iroh = binding)
+        store.upsert(https)
+        store.upsert(iroh)
+        assertEquals(2, store.load().size)
+        assertNotEquals(https.key, iroh.key)
+        val restored = store.load().single { it.iroh != null }
+        assertEquals(binding, restored.iroh)
+        assertArrayEquals(TestCertificates.ingressCa, restored.caCertificate)
+        assertEquals(iroh.deviceToken, restored.deviceToken)
+        assertFalse(preferences.strings.values.any { it.contains(iroh.deviceToken) })
+        store.update(iroh.key) { it.copy(displayName = "Renamed iroh") }
+        assertEquals("Renamed iroh", store.load().single { it.iroh != null }.displayName)
+        assertTrue(store.remove(iroh.key))
+        assertEquals(listOf(https.key), store.load().map { it.key })
+    }
+
+    @Test fun unboundLogicalOriginsAndUnpinnedIrohRowsCannotBePersisted() {
+        val store = PairedDeviceStore(MemoryCredentialPreferences(), JvmCredentialEncryption())
+        val binding = IrohDeviceBinding("a".repeat(64), 25443)
+        val row = record().copy(origin = binding.origin)
+        assertThrows(IllegalArgumentException::class.java) { store.upsert(row) }
+        assertThrows(IllegalArgumentException::class.java) { store.upsert(row.copy(iroh = binding)) }
+        assertThrows(IllegalArgumentException::class.java) { store.upsert(row.copy(iroh = binding.copy(localPort = 1023))) }
+        assertTrue(store.load().isEmpty())
+    }
     private fun record(seed: Char = 'a', name: String = "Saved computer") = PairedDeviceRecord(
         instanceId = seed.toString().repeat(64), deviceId = "", displayName = name, mode = AccessMode.REMOTE,
         origin = GatewayOrigin.parse("https://computer.example")!!, deviceToken = "T".repeat(43),

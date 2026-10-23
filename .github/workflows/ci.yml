@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  transport:
+    name: Local transport (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: rustfmt, clippy
+      - run: npm test
+      - run: npm run check:docs
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo build --locked -p dsh-mobile-iroh-host -p dsh-mobile-iroh-transport-sim
+      - name: Exercise the real native private-state adapters
+        env:
+          DSH_IROH_TEST_HOST_BINARY: ${{ github.workspace }}/target/debug/dsh-mobile-iroh-host${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: node --test integration/native-preference-store.test.mjs integration/native-config-store.test.mjs integration/native-tls-manager.test.mjs
+      - run: npm run smoke:iroh
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install isolated public Mobile Gateway and browser tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          integration_runtime="$RUNNER_TEMP/iroh-mobile-runtime"
+          npm install --prefix "$integration_runtime" --no-save --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.2 dsh-mobile@0.6.16 playwright@1.63.0
+          "$integration_runtime/node_modules/.bin/playwright" install chromium --only-shell --with-deps
+          echo "DSH_MOBILE_MODULE=$integration_runtime/node_modules/dsh-mobile/lib/index.mjs" >> "$GITHUB_ENV"
+          echo "DSH_IROH_DSH_BIN=$integration_runtime/node_modules/@deepseek-ai/dsh/lib/bin.js" >> "$GITHUB_ENV"
+      - run: npm run smoke:gateway
+      - run: npm run smoke:host-session
+      - run: npm run smoke:managed-tls
+      - run: npm run smoke:dsh-frontend
+      - run: npm run smoke:operator-ui
+      - run: npm run smoke:operator-runtime
+
+  android:
+    name: Native Android build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;25.2.9519653"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build actual JNI libraries, test and shrink the independent app
+        working-directory: apps/mobile/android
+        run: >-
+          ./gradlew --no-daemon -PirohNative=true
+          -PirohNdk="$ANDROID_HOME/ndk/25.2.9519653"
+          lintDebug testDebugUnitTest assembleDebug assembleRelease
+          -x lintAnalyzeDebugUnitTest -x lintAnalyzeDebugAndroidTest
+      - name: Inspect APK ABIs, exported JNI symbols, ELF and ZIP alignment
+        run: >-
+          node scripts/build-android-transport.mjs
+          --ndk "$ANDROID_HOME/ndk/25.2.9519653"
+          --verify-apk apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          --build-tools "$ANDROID_HOME/build-tools/36.0.0"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: independent-iroh-debug-apk
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

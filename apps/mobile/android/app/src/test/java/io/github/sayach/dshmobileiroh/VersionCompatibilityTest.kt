@@ -6,6 +6,13 @@ import org.junit.Test
 
 class VersionCompatibilityTest {
     @Test
+    fun independentProductVersionUsesAnExplicitNativeApiBaseline() {
+        val current = GatewayMetadata(1, "0.6.13", "0.6.5", 1)
+        assertEquals(CompatibilityIssueKind.APP_TOO_OLD, VersionCompatibility.evaluate(BuildConfig.VERSION_NAME, current)?.kind)
+        assertNull(VersionCompatibility.evaluate(BuildConfig.MOBILE_COMPATIBILITY_VERSION, current))
+        assertEquals("0.6.5", BuildConfig.MOBILE_COMPATIBILITY_VERSION)
+    }
+    @Test
     fun acceptsTheCurrentAppAndPlugin() {
         assertNull(VersionCompatibility.evaluate("0.3.0", metadata()))
     }

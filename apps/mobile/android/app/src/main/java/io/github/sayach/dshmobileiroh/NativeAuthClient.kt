@@ -71,7 +71,7 @@ internal data class NativeAuthTimeouts(
 
 /** Keeps LAN failures fast while allowing mobile networks and remote relays enough time to respond. */
 internal fun nativeAuthTimeouts(host: String): NativeAuthTimeouts =
-    if (RemoteHostPolicy.isRemoteCandidate(host)) {
+    if (RemoteHostPolicy.isRemoteCandidate(host) || IrohDeviceBinding.isIrohHost(host)) {
         NativeAuthTimeouts(
             bootstrapConnectMs = 3_000,
             bootstrapReadMs = 5_000,
@@ -174,8 +174,9 @@ internal object NativeAuthClient {
         origin: GatewayOrigin,
         cancellation: NativeConnectionCancellation? = null,
         transport: TransportEndpoint = LocalTransport,
+        caCertificate: ByteArray? = null,
     ): GatewayMetadata? {
-        val bytes = bootstrapGet(origin, "/mobile-access/metadata", 8 * 1024, allowMissing = true, cancellation = cancellation, transport = transport) ?: return null
+        val bytes = bootstrapGet(origin, "/mobile-access/metadata", 8 * 1024, allowMissing = true, cancellation = cancellation, transport = transport, trustedCaCertificate = caCertificate) ?: return null
         return parseGatewayMetadata(JSONObject(bytes.toString(Charsets.UTF_8)))
     }
 
@@ -186,20 +187,26 @@ internal object NativeAuthClient {
         allowMissing: Boolean = false,
         cancellation: NativeConnectionCancellation? = null,
         transport: TransportEndpoint,
+        trustedCaCertificate: ByteArray? = null,
     ): ByteArray? {
         cancellation?.throwIfCancelled()
-        val trustManager = object : X509TrustManager {
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        if (IrohDeviceBinding.isIrohHost(origin.host) && transport === LocalTransport) {
+            throw NativeAuthFailure(NativeAuthFailureKind.NETWORK)
         }
-        val context = SSLContext.getInstance("TLS").apply {
-            init(null, arrayOf(trustManager), SecureRandom())
+        val socketFactory = if (trustedCaCertificate != null) PinnedTls.socketFactory(trustedCaCertificate) else {
+            val trustManager = object : X509TrustManager {
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+            }
+            SSLContext.getInstance("TLS").apply {
+                init(null, arrayOf(trustManager), SecureRandom())
+            }.socketFactory
         }
         val connection = transport.open(origin, path)
         val timeouts = nativeAuthTimeouts(origin.host)
         return withCancellableNativeConnection(connection, cancellation) {
-            connection.sslSocketFactory = context.socketFactory
+            connection.sslSocketFactory = socketFactory
             connection.connectTimeout = timeouts.bootstrapConnectMs
             connection.readTimeout = timeouts.bootstrapReadMs
             connection.instanceFollowRedirects = false
@@ -228,6 +235,9 @@ internal object NativeAuthClient {
         parser: (InputStream) -> T,
     ): T {
         cancellation?.throwIfCancelled()
+        if (IrohDeviceBinding.isIrohHost(origin.host) && transport === LocalTransport) {
+            throw NativeAuthFailure(NativeAuthFailureKind.NETWORK)
+        }
         val connection = transport.open(origin, path)
         val timeouts = nativeAuthTimeouts(origin.host)
         return withCancellableNativeConnection(connection, cancellation) {

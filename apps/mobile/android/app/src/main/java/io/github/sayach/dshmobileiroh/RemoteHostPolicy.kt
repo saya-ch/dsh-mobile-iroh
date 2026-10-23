@@ -40,7 +40,7 @@ internal object RemoteHostPolicy {
         if (isPublicIpv4(normalized)) return true
         if (normalized.isEmpty() || normalized.contains(':') || normalized == "localhost"
             || normalized.endsWith(".local") || normalized.endsWith(".lan")
-            || normalized.endsWith(".home") || normalized.endsWith(".internal")) return false
+            || normalized.endsWith(".home") || normalized.endsWith(".internal") || normalized.endsWith(".localhost")) return false
         val labels = normalized.split('.')
         if (labels.size < 2 || labels.all { label -> label.all(Char::isDigit) }) return false
         return labels.all { label ->

@@ -1,235 +1,247 @@
-//! dsh-mobile-iroh-host: dsh 审批遥控的电脑侧 iroh sidecar 基线。
-//!
-//! `host` 模式作为 dsh 插件的 sidecar 运行:stdin/stdout 走 JSON-lines 与插件通信,
-//! stderr 只做人读日志;iroh 侧一条连接一条控制 bi 流,同样 JSON-lines。
-//! `phone-sim` 是手机端的参考实现/联调替身,与将来 Tauri 端说同一套线协议。
-//!
-//! 配对模型:6 位 CSPRNG 数字码 + 窗口 TTL + 全窗口 3 次尝试上限;配对通过后把
-//! iroh TLS 已验证的 EndpointId 持久入白名单,之后凭 ID 直连,码即作废。
+//! First-party authenticated iroh byte carrier. No DSH credentials or approval
+//! decisions are accepted by the sidecar; the target gateway owns application authorization.
 
-use std::collections::HashMap;
+mod operator_config;
+mod preferences;
+mod tls;
+
+use std::collections::{HashMap, HashSet};
+use std::io::ErrorKind;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
 use clap::{Parser, Subcommand};
-use dsh_mobile_iroh_core::i18n::t;
 use dsh_mobile_iroh_core::{
-    decode_wire, encode_wire, load_or_create_secret, pair_fail_text, read_line_bounded,
-    read_request_head, rewrite_request_head, write_line, write_private, ProxyAuth, Wire, ALPN,
-    MAX_LINE, MAX_UNPAIRED_LINE, PAIR_BAD_CODE, PAIR_EXPIRED, PAIR_NO_WINDOW,
-    PAIR_TOO_MANY_ATTEMPTS,
+    create_private_directory, decode_wire, encode_wire, open_private_lock_file, pair_fail_text,
+    read_line_bounded, read_private_file, validate_device_name, write_line, write_private, Wire,
+    ALPN, MAX_UNPAIRED_LINE, PAIR_BAD_CODE, PAIR_EXPIRED, PAIR_NO_WINDOW, PAIR_TOO_MANY_ATTEMPTS,
 };
 use iroh::endpoint::{presets, Connection};
-use iroh::{Endpoint, EndpointId};
+use iroh::{Endpoint, EndpointAddr, EndpointId};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{mpsc, Mutex};
+use tokio::io::{AsyncRead, AsyncReadExt as _};
+use tokio::sync::{watch, Mutex, Semaphore};
+use tokio::task::JoinSet;
+use tokio::time::timeout;
 
-/// clap 渲染 --help 时语言就得是定的,所以 --lang 得自己先从 argv 里捞一遍
-fn lang_from_argv() -> Option<String> {
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        if let Some(v) = a.strip_prefix("--lang=") {
-            return Some(v.to_string());
-        }
-        if a == "--lang" {
-            return args.next();
-        }
-    }
-    None
-}
-
-/// 人读日志与帮助的语言。插件启动 sidecar 时按电脑的系统语言传 --lang,两边始终一致;
-/// 直接手跑时先看 LC_ALL/LANG,没有就问系统——Windows 和 macOS 上这两个变量通常根本不存在,
-/// 只认环境变量就会把英文用户当中文用户;系统也问不出来才退回中文。
-fn set_lang(explicit: Option<&str>) {
-    let tag = resolve_tag(
-        explicit,
-        std::env::var("LC_ALL").ok(),
-        std::env::var("LANG").ok(),
-        sys_locale::get_locale(),
-    );
-    dsh_mobile_iroh_core::i18n::set_from_tag(&tag);
-}
-
-/// 四个来源的优先级。取值都从外面传进来,才好逐条验——否则只能在跑的那台机器上碰运气。
-fn resolve_tag(
-    explicit: Option<&str>,
-    lc_all: Option<String>,
-    lang: Option<String>,
-    system: Option<String>,
-) -> String {
-    [explicit.map(str::to_string), lc_all, lang, system]
-        .into_iter()
-        .flatten()
-        .find(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "zh".to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_tag;
-
-    fn s(v: &str) -> Option<String> {
-        Some(v.to_string())
-    }
-
-    #[test]
-    fn explicit_lang_wins() {
-        assert_eq!(
-            resolve_tag(Some("en"), s("zh_CN.UTF-8"), s("zh_CN.UTF-8"), s("zh-CN")),
-            "en"
-        );
-    }
-
-    #[test]
-    fn lc_all_before_lang() {
-        assert_eq!(
-            resolve_tag(None, s("en_GB.UTF-8"), s("zh_CN.UTF-8"), None),
-            "en_GB.UTF-8"
-        );
-    }
-
-    #[test]
-    fn system_locale_when_env_absent() {
-        // Windows 与 macOS 上 LC_ALL/LANG 通常都没有,只认环境变量就会把英文用户当中文用户
-        assert_eq!(resolve_tag(None, None, None, s("en-GB")), "en-GB");
-    }
-
-    #[test]
-    fn empty_env_does_not_count() {
-        // LANG= 空串是"没设",不是"设成了非中文"
-        assert_eq!(resolve_tag(None, s(""), s("  "), s("zh-CN")), "zh-CN");
-    }
-
-    #[test]
-    fn chinese_when_nothing_is_known() {
-        assert_eq!(resolve_tag(None, None, None, None), "zh");
-    }
-}
-
+const STDIO_VERSION: u8 = 1;
+const MAX_STDIN_LINE: usize = 16 * 1024;
+const MAX_STORE_BYTES: usize = 128 * 1024;
+// A full roster with 64-character Unicode names still fits the 16 KiB stdio event limit.
+const MAX_DEVICES: usize = 32;
+const MAX_CONNECTIONS: usize = 32;
+const MAX_PROXY_STREAMS: usize = 32;
+const MAX_GLOBAL_PROXY_STREAMS: usize = 256;
+const HANDSHAKE_BUDGET: Duration = Duration::from_secs(10);
+const CONNECT_BUDGET: Duration = Duration::from_secs(15);
+const PROXY_OPEN_BUDGET: Duration = Duration::from_secs(5);
 const PAIRING_TTL: Duration = Duration::from_secs(600);
 const PAIRING_MAX_ATTEMPTS: u32 = 3;
 
-// 帮助文本同样走 t()。不用 /// 写:那样中文注释与英文帮助得各存一份,改一边忘一边。
 #[derive(Parser)]
-#[command(name = "dsh-mobile-iroh-host", about = t(
-    "dsh 审批遥控:电脑侧 iroh 端(插件 sidecar)与手机模拟端",
-    "dsh approval tether: the computer-side iroh endpoint (the plugin's sidecar), plus a phone stand-in",
-))]
+#[command(
+    name = "dsh-mobile-iroh-host",
+    about = "Authenticated iroh byte carrier"
+)]
 struct Cli {
-    #[arg(long, global = true, help = t(
-        "人读日志与这份帮助的语言(zh / en);不给则看 LC_ALL、LANG",
-        "language for the logs and for this help (zh / en); otherwise LC_ALL and LANG decide",
-    ))]
-    lang: Option<String>,
+    #[arg(long, global = true, default_value = "en", value_parser = ["zh", "en"])]
+    lang: String,
     #[command(subcommand)]
-    cmd: Cmd,
+    command: Command,
 }
 
 #[derive(Subcommand)]
-enum Cmd {
-    #[command(about = t(
-        "sidecar 模式:stdio JSON-lines 对插件,iroh 对手机",
-        "sidecar mode: JSON-lines over stdio to the plugin, iroh to the phone",
-    ))]
+enum Command {
     Host {
-        #[arg(long, help = t(
-            "身份与配对白名单目录",
-            "where the identity key and the paired-device list live",
-        ))]
+        #[arg(long)]
         data_dir: Option<PathBuf>,
-        #[arg(long, help = t(
-            "启动即开配对窗口(默认仅在白名单为空时自动开)",
-            "open a pairing window right away (by default one opens only while nothing is paired yet)",
-        ))]
+        #[arg(long)]
         pair: bool,
-        #[arg(long, help = t(
-            "已配对设备的代理流转发目标(dsh web 地址);不配则拒绝代理流",
-            "where to forward proxy streams from paired devices (the dsh web address); without it they are refused",
-        ))]
-        proxy_target: Option<std::net::SocketAddr>,
+        #[arg(long)]
+        proxy_target: Option<SocketAddr>,
+        /// Disable relay and discovery, and bind iroh to loopback only.
+        #[arg(long)]
+        local_only: bool,
     },
-    #[command(about = t(
-        "手机端替身:连接 host,打印审批请求并按策略应答",
-        "phone stand-in: connects to a host, prints approval requests and answers them by policy",
-    ))]
     PhoneSim {
-        #[arg(long, help = t(
-            "本地起代理监听,经 host 的代理流访问其 dsh web(如 127.0.0.1:17380)",
-            "listen here and reach the host's dsh web over a proxy stream (e.g. 127.0.0.1:17380)",
-        ))]
-        proxy_listen: Option<std::net::SocketAddr>,
-        #[arg(long, help = t("host 的设备 ID", "the host's device ID"))]
-        peer: String,
-        #[arg(long, help = t(
-            "配对码(首次连接用;已配对则省略)",
-            "pairing code (only for the first connection; omit once paired)",
-        ))]
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+        #[arg(long)]
+        peer: EndpointId,
+        /// Explicit direct addresses; the endpoint identity remains TLS authenticated.
+        #[arg(long)]
+        peer_address: Vec<SocketAddr>,
+        #[arg(long)]
         code: Option<String>,
-        #[arg(long, default_value = "phone-sim", help = t(
-            "设备名(配对时登记)",
-            "device name, as recorded when pairing",
-        ))]
+        #[arg(long, default_value = "phone-sim")]
         name: String,
-        #[arg(long, value_parser = ["allow", "reject"], default_value = "allow", help = t(
-            "收到审批后的应答策略",
-            "how to answer an approval request",
-        ))]
-        auto: String,
-        #[arg(long, default_value_t = 2000, help = t(
-            "应答前延迟毫秒(模拟人掏手机)",
-            "milliseconds to wait before answering, as if reaching for the phone",
-        ))]
-        delay: u64,
-        #[arg(long, help = t(
-            "身份与配对记录目录",
-            "where the identity key and the pairing record live",
-        ))]
+        #[arg(long)]
+        proxy_listen: Option<SocketAddr>,
+        #[arg(long)]
+        local_only: bool,
+    },
+    Id {
+        #[arg(long)]
         data_dir: Option<PathBuf>,
     },
-    #[command(about = t("打印 host 身份 ID", "print the host's identity ID"))]
-    Id {
-        #[arg(long, help = t(
-            "身份与配对白名单目录",
-            "where the identity key and the paired-device list live",
-        ))]
-        data_dir: Option<PathBuf>,
+    /// Read only the fixed private startup preference; does not launch iroh.
+    PreferenceLoad {
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    /// Persist the fixed private startup preference; does not launch iroh.
+    PreferenceSave {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long, required = true, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    /// Prepare fixed durable CA and endpoint certificate without launching iroh.
+    TlsPrepare {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long, default_value_t = 90)]
+        leaf_validity_days: u16,
+        #[arg(long, default_value_t = 30)]
+        renew_before_days: u16,
+        #[arg(long)]
+        hold: bool,
+        #[arg(long, default_value_t = 60000, value_parser = clap::value_parser!(u64).range(1..=60000))]
+        lease_timeout_ms: u64,
+    },
+    /// Renew only the leaf, retaining the CA and endpoint identity.
+    TlsRenew {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long, default_value_t = 90)]
+        leaf_validity_days: u16,
+        #[arg(long, default_value_t = 30)]
+        renew_before_days: u16,
+        #[arg(long)]
+        hold: bool,
+        #[arg(long, default_value_t = 60000, value_parser = clap::value_parser!(u64).range(1..=60000))]
+        lease_timeout_ms: u64,
+    },
+    /// Read safe metadata for a complete fixed TLS state.
+    TlsStatus {
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    /// Load only the fixed, nonsecret operator startup settings.
+    OperatorConfigLoad {
+        #[arg(long)]
+        data_dir: PathBuf,
+    },
+    /// Save only canonical upstream and transport choices; accepts no DSH token.
+    OperatorConfigSave {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        upstream_origin: String,
+        #[arg(long)]
+        local_port: u16,
+        #[arg(long, required = true, action = clap::ArgAction::Set)]
+        local_only: bool,
     },
 }
 
-/// 插件 → sidecar(stdin)
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
+#[serde(deny_unknown_fields)]
+struct PluginCommand {
+    version: u8,
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default, deserialize_with = "present_text")]
+    id: Option<String>,
+}
+
+fn present_text<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
+}
+
 enum PluginIn {
-    Approval {
-        id: String,
-        tool_name: String,
-        reason: String,
-    },
-    ApprovalCancel {
-        id: String,
-    },
     PairingBegin,
     DeviceList,
-    DeviceForget {
-        id: String,
-    },
-    ProxyAuth {
-        cookie: String,
-        authority: String,
-    },
+    DeviceForget { id: String },
+    Shutdown,
 }
 
-/// sidecar → 插件(stdout)
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TlsRelease {
+    version: u8,
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+async fn wait_tls_release(deadline: Duration) -> Result<()> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    // Tokio stdin owns an uncancellable blocking-pool read, which would keep
+    // runtime shutdown waiting after this command's lease deadline. This bounded
+    // reader belongs only to the one-shot native process and ends with it.
+    std::thread::spawn(move || {
+        let result = (|| -> Result<()> {
+            use std::io::Read as _;
+            let mut input = std::io::stdin().lock();
+            let mut bytes = Vec::new();
+            loop {
+                let mut byte = [0u8; 1];
+                input.read_exact(&mut byte)?;
+                if byte[0] == b'\n' {
+                    break;
+                }
+                if bytes.len() == 128 {
+                    bail!("TLS release exceeds byte limit");
+                }
+                bytes.push(byte[0]);
+            }
+            let release: TlsRelease = serde_json::from_slice(&bytes)?;
+            if release.version != 1 || release.kind != "tls-release" {
+                bail!("invalid TLS lease release");
+            }
+            Ok(())
+        })();
+        let _ = sender.send(result);
+    });
+    timeout(deadline, receiver).await??
+}
+
+fn decode_command(line: &str) -> Result<PluginIn> {
+    if line.len() > MAX_STDIN_LINE {
+        bail!("stdio command exceeds byte limit");
+    }
+    let m: PluginCommand = serde_json::from_str(line).context("invalid stdio command")?;
+    if m.version != STDIO_VERSION {
+        bail!("unsupported stdio version");
+    }
+    match (m.kind.as_str(), m.id) {
+        ("pairing-begin", None) => Ok(PluginIn::PairingBegin),
+        ("device-list", None) => Ok(PluginIn::DeviceList),
+        ("shutdown", None) => Ok(PluginIn::Shutdown),
+        ("device-forget", Some(id)) => {
+            let parsed: EndpointId = id.parse().context("invalid device id")?;
+            if parsed.to_string() != id {
+                bail!("device id is not canonical");
+            }
+            Ok(PluginIn::DeviceForget { id })
+        }
+        _ => bail!("unsupported stdio fields or command"),
+    }
+}
+
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum PluginOut {
     Ready {
         endpoint_id: String,
+        direct_addresses: Vec<String>,
+        local_only: bool,
     },
     Pairing {
         code: String,
@@ -246,8 +258,6 @@ enum PluginOut {
         peer: String,
         name: String,
     },
-    /// reason 是 dsh-mobile-iroh-core 里的配对失败原因码,插件按 dsh 那侧的语言渲染
-    /// 连接路径:direct=NAT 打洞直连 / relay=经中转
     PeerPath {
         peer: String,
         kind: String,
@@ -256,24 +266,39 @@ enum PluginOut {
     PeerDisconnected {
         peer: String,
     },
-    Decision {
-        id: String,
-        outcome: String,
+    ProxyOpened {
+        peer: String,
     },
-    /// 手机第一次开代理流——即 WebView 真的开始拉界面了
-    ProxyOpened,
-    /// 已配对设备全量列表;online 标出此刻连着的那些
     Devices {
         devices: Vec<DeviceView>,
     },
+    Error {
+        code: String,
+        message: String,
+    },
+    Stopped,
+    ProxyReady {
+        origin: String,
+    },
 }
 
-#[derive(Serialize, Deserialize, Default)]
+fn emit(event: &PluginOut) {
+    let mut value = serde_json::to_value(event).expect("event is serializable");
+    value
+        .as_object_mut()
+        .expect("event is an object")
+        .insert("version".into(), STDIO_VERSION.into());
+    println!("{}", value);
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PairedStore {
     devices: Vec<PairedDevice>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PairedDevice {
     id: String,
     name: String,
@@ -294,10 +319,8 @@ struct PairingWindow {
     attempts: u32,
 }
 
-/// 一台在线手机。连接句柄要留着:移除已配对设备时必须能主动断开它,
-/// 只丢下行队列不行——那只会结束 writer,reader 与代理接收仍挂在连接上。
 struct PeerConn {
-    tx: mpsc::Sender<String>,
+    generation: u64,
     conn: Connection,
 }
 
@@ -305,719 +328,1278 @@ struct HostState {
     store_path: PathBuf,
     store: PairedStore,
     pairing: Option<PairingWindow>,
-    /// 在线手机(EndpointId 字符串 → 下行写队列 + 连接句柄)
     conns: HashMap<String, PeerConn>,
-    proxy_auth: Option<Arc<ProxyAuth>>,
+    next_generation: u64,
+    shutdown: watch::Sender<bool>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // 先定语言再 parse:--help 是 parse 里渲染的,等 cli.lang 到手就晚了
-    set_lang(lang_from_argv().as_deref());
-    let cli = Cli::parse();
-    match cli.cmd {
-        Cmd::Id { data_dir } => {
-            let dir = data_dir.unwrap_or_else(default_data_dir);
-            let secret = load_or_create_secret(&dir.join("identity.key"))?;
-            println!("{}", secret.public());
-        }
-        Cmd::Host {
-            data_dir,
-            pair,
-            proxy_target,
-        } => {
-            host_main(
-                data_dir.unwrap_or_else(default_data_dir),
-                pair,
-                proxy_target,
-            )
-            .await?
-        }
-        Cmd::PhoneSim {
-            proxy_listen,
-            peer,
-            code,
-            name,
-            auto,
-            delay,
-            data_dir,
-        } => {
-            let dir =
-                data_dir.unwrap_or_else(|| default_data_dir_named("dsh-mobile-iroh-phone-sim"));
-            phone_sim_main(dir, peer, code, name, auto, delay, proxy_listen).await?
-        }
+/// Closing an owning handler always terminates its transport and child streams.
+struct CloseConnection(Connection);
+impl Drop for CloseConnection {
+    fn drop(&mut self) {
+        self.0.close(0u8.into(), b"control closed");
     }
-    Ok(())
 }
 
-fn default_data_dir() -> PathBuf {
-    default_data_dir_named("dsh-mobile-iroh")
-}
-
-fn default_data_dir_named(name: &str) -> PathBuf {
+fn default_data_dir(name: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        dirs::home_dir()
+            .expect("Windows user profile must be available")
+            .join(format!(".{name}"))
+    }
+    #[cfg(not(windows))]
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(name)
 }
 
-fn load_store(path: &Path) -> PairedStore {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+/// An OS-owned profile lock prevents concurrent identity/authorization updates.
+fn lock_data_dir(dir: &Path) -> Result<std::fs::File> {
+    create_private_directory(dir)?;
+    if std::fs::symlink_metadata(dir)?.file_type().is_symlink() {
+        bail!("data directory must not be a symbolic link");
+    }
+    let path = dir.join("host.lock");
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        bail!("profile lock must not be a symbolic link");
+    }
+    let file = open_private_lock_file(&path).context("cannot open profile lock")?;
+    file.try_lock()
+        .context("another host owns this data directory")?;
+    Ok(file)
 }
 
-// 白名单里每条都是一把长期凭证,与身份密钥同等对待:仅属主可读。
+fn check_loopback(address: SocketAddr, allow_zero: bool) -> Result<SocketAddr> {
+    if !address.ip().is_loopback() || (!allow_zero && address.port() == 0) {
+        bail!("address must be an explicit non-wildcard loopback socket");
+    }
+    Ok(address)
+}
+
+fn load_store(path: &Path) -> Result<PairedStore> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(PairedStore::default()),
+        Err(error) => return Err(error).context("cannot inspect paired-device state"),
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() > MAX_STORE_BYTES as u64
+    {
+        bail!("paired-device state is not a bounded regular file");
+    }
+    let store: PairedStore = serde_json::from_slice(
+        &read_private_file(path, MAX_STORE_BYTES).context("cannot read paired-device state")?,
+    )
+    .context("paired-device state is invalid")?;
+    if store.devices.len() > MAX_DEVICES {
+        bail!("paired-device state exceeds device limit");
+    }
+    let mut seen = HashSet::new();
+    for device in &store.devices {
+        let parsed: EndpointId = device.id.parse().context("invalid stored peer id")?;
+        if parsed.to_string() != device.id || !seen.insert(&device.id) {
+            bail!("stored peer id is duplicate or not canonical");
+        }
+        validate_device_name(&device.name)?;
+        if !device.paired_at.starts_with("unix:")
+            || device.paired_at.len() > 32
+            || device.paired_at[5..].parse::<u64>().is_err()
+        {
+            bail!("invalid pairing timestamp");
+        }
+    }
+    Ok(store)
+}
+
 fn save_store(path: &Path, store: &PairedStore) -> Result<()> {
     write_private(path, &serde_json::to_vec_pretty(store)?)
 }
 
-fn new_pairing_window() -> PairingWindow {
+fn begin_pairing(state: &mut HostState) {
     let code = format!("{:06}", rand::rng().random_range(0..1_000_000u32));
-    PairingWindow {
+    emit(&PluginOut::Pairing {
+        code: code.clone(),
+        expires_in_sec: PAIRING_TTL.as_secs(),
+    });
+    state.pairing = Some(PairingWindow {
         code,
         deadline: tokio::time::Instant::now() + PAIRING_TTL,
         attempts: 0,
-    }
-}
-
-fn emit(msg: &PluginOut) {
-    // stdout 是插件协议通道;序列化失败属编程错误,直接崩比静默丢事件好
-    println!(
-        "{}",
-        serde_json::to_string(msg).expect("PluginOut is serializable")
-    );
-}
-
-/// Termux 里没有 JVM:iroh 默认解析器在 android 目标上经 JNI 读系统 DNS,
-/// ndk-context 未初始化即 panic。iroh 用 catch_unwind 接住后回退 Google DNS,
-/// 但默认 panic hook 已先把整段栈打到 stderr,看着像启动失败。这里直接给出
-/// 与那条回退等价的解析器,根本不进 JNI。
-#[cfg(target_os = "android")]
-fn android_dns_resolver() -> iroh::dns::DnsResolver {
-    use iroh::dns::DnsProtocol;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-    const GOOGLE: [IpAddr; 4] = [
-        IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
-        IpAddr::V4(Ipv4Addr::new(8, 8, 4, 4)),
-        IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888)),
-        IpAddr::V6(Ipv6Addr::new(0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8844)),
-    ];
-    iroh::dns::DnsResolver::builder()
-        .with_nameservers(GOOGLE.into_iter().flat_map(|ip| {
-            let addr = SocketAddr::new(ip, 53);
-            [(addr, DnsProtocol::Udp), (addr, DnsProtocol::Tcp)]
-        }))
-        .build()
-}
-
-fn endpoint_builder() -> iroh::endpoint::Builder {
-    let builder = Endpoint::builder(presets::N0);
-    #[cfg(target_os = "android")]
-    let builder = builder.dns_resolver(android_dns_resolver());
-    builder
-}
-
-async fn host_main(
-    data_dir: PathBuf,
-    force_pair: bool,
-    proxy_target: Option<std::net::SocketAddr>,
-) -> Result<()> {
-    let secret = load_or_create_secret(&data_dir.join("identity.key"))?;
-    let store_path = data_dir.join("paired.json");
-    let store = load_store(&store_path);
-    let ep = endpoint_builder()
-        .secret_key(secret)
-        .alpns(vec![ALPN.to_vec()])
-        .bind()
-        .await
-        .context(t(
-            "iroh endpoint 启动失败",
-            "failed to start the iroh endpoint",
-        ))?;
-    emit(&PluginOut::Ready {
-        endpoint_id: ep.id().to_string(),
     });
-
-    let mut state = HostState {
-        store_path,
-        store,
-        pairing: None,
-        conns: HashMap::new(),
-        proxy_auth: None,
-    };
-    if force_pair || state.store.devices.is_empty() {
-        let w = new_pairing_window();
-        emit(&PluginOut::Pairing {
-            code: w.code.clone(),
-            expires_in_sec: PAIRING_TTL.as_secs(),
-        });
-        state.pairing = Some(w);
-    }
-    let state = Arc::new(Mutex::new(state));
-
-    // stdin:插件下发审批/取消/开配对
-    tokio::spawn(stdin_loop(state.clone()));
-
-    loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => break,
-            incoming = ep.accept() => {
-                let Some(incoming) = incoming else { break };
-                let state = state.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_phone(incoming, state, proxy_target).await {
-                        eprintln!("[host] {}{e:#}", t("入站连接处理失败: ", "inbound connection failed: "));
-                    }
-                });
-            }
-        }
-    }
-    ep.close().await;
-    Ok(())
 }
 
-async fn stdin_loop(state: Arc<Mutex<HostState>>) {
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let msg: PluginIn = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!(
-                    "[host] {}{e}: {line}",
-                    t("无法解析插件消息: ", "cannot parse the plugin message: ")
-                );
-                continue;
-            }
-        };
-        match msg {
-            PluginIn::Approval {
-                id,
-                tool_name,
-                reason,
-            } => {
-                let wire = encode_wire(&Wire::Approval {
-                    id,
-                    tool_name,
-                    reason,
-                })
-                .expect("Wire is serializable");
-                broadcast(&state, wire).await;
-            }
-            PluginIn::ApprovalCancel { id } => {
-                let wire = encode_wire(&Wire::ApprovalCancel { id }).expect("Wire is serializable");
-                broadcast(&state, wire).await;
-            }
-            PluginIn::PairingBegin => {
-                let mut s = state.lock().await;
-                let w = new_pairing_window();
-                emit(&PluginOut::Pairing {
-                    code: w.code.clone(),
-                    expires_in_sec: PAIRING_TTL.as_secs(),
-                });
-                s.pairing = Some(w);
-            }
-            PluginIn::DeviceList => {
-                let s = state.lock().await;
-                emit(&PluginOut::Devices {
-                    devices: device_views(&s),
-                });
-            }
-            PluginIn::DeviceForget { id } => {
-                let mut s = state.lock().await;
-                s.store.devices.retain(|d| d.id != id);
-                let (path, store) = (s.store_path.clone(), &s.store);
-                if let Err(e) = save_store(&path, store) {
-                    eprintln!(
-                        "[host] {}{e:#}",
-                        t(
-                            "写入配对白名单失败: ",
-                            "cannot write the paired-device list: "
-                        )
-                    );
-                }
-                // 移出白名单只挡下次连接。此刻正连着的那条必须主动断,
-                // 否则「移除」在设备下线前完全不生效。
-                if let Some(peer) = s.conns.remove(&id) {
-                    peer.conn.close(1u8.into(), b"forgotten");
-                }
-                emit(&PluginOut::Devices {
-                    devices: device_views(&s),
-                });
-            }
-            PluginIn::ProxyAuth { cookie, authority } => {
-                // 这两个值会被拼进转发的请求头;插件是可信父进程,但这是进程
-                // 边界,控制字符(CRLF 注入)在这里挡一道
-                if cookie
-                    .bytes()
-                    .chain(authority.bytes())
-                    .any(|b| b < 0x20 || b == 0x7f)
-                {
-                    eprintln!(
-                        "[host] {}",
-                        t(
-                            "proxy-auth 含控制字符,已丢弃",
-                            "the proxy-auth value has control characters; dropped"
-                        )
-                    );
-                    continue;
-                }
-                state.lock().await.proxy_auth = Some(Arc::new(ProxyAuth { cookie, authority }));
-                eprintln!("[host] {}", t("已装载浏览器认证 cookie,代理流将逐请求注入", "browser auth cookie loaded; it will be injected per request on proxy streams"));
-            }
-        }
-    }
-}
-
-fn device_views(s: &HostState) -> Vec<DeviceView> {
-    s.store
+fn device_views(state: &HostState) -> Vec<DeviceView> {
+    state
+        .store
         .devices
         .iter()
         .map(|d| DeviceView {
             id: d.id.clone(),
             name: d.name.clone(),
             paired_at: d.paired_at.clone(),
-            online: s.conns.contains_key(&d.id),
+            online: state.conns.contains_key(&d.id),
         })
         .collect()
 }
 
-async fn broadcast(state: &Arc<Mutex<HostState>>, line: String) {
-    let s = state.lock().await;
-    for PeerConn { tx, .. } in s.conns.values() {
-        let _ = tx.try_send(line.clone());
+async fn make_endpoint(secret: iroh::SecretKey, local_only: bool) -> Result<Endpoint> {
+    let builder = if local_only {
+        Endpoint::builder(presets::Minimal)
+            .clear_ip_transports()
+            .bind_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))?
+    } else {
+        Endpoint::builder(presets::N0)
+    };
+    Ok(builder
+        .secret_key(secret)
+        .alpns(vec![ALPN.to_vec()])
+        .bind()
+        .await?)
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+    dsh_mobile_iroh_core::i18n::set_from_tag(&cli.lang);
+    let tls_force = matches!(&cli.command, Command::TlsRenew { .. });
+    match cli.command {
+        Command::TlsPrepare {
+            data_dir,
+            leaf_validity_days,
+            renew_before_days,
+            hold,
+            lease_timeout_ms,
+        }
+        | Command::TlsRenew {
+            data_dir,
+            leaf_validity_days,
+            renew_before_days,
+            hold,
+            lease_timeout_ms,
+        } => {
+            let policy = tls::Policy {
+                leaf_validity_days,
+                renew_before_days,
+            };
+            let (state, lease) = if hold {
+                tls::prepare_held(&data_dir, policy, tls_force)
+                    .map(|(state, lease)| (state, Some(lease)))
+            } else {
+                tls::prepare(&data_dir, policy, tls_force).map(|state| (state, None))
+            }
+            .map_err(|_| anyhow::anyhow!("host TLS preparation failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+            if hold {
+                std::io::Write::flush(&mut std::io::stdout())?;
+                wait_tls_release(Duration::from_millis(lease_timeout_ms))
+                    .await
+                    .map_err(|_| anyhow::anyhow!("host TLS lease release failed"))?;
+            }
+            drop(lease);
+        }
+        Command::TlsStatus { data_dir } => {
+            let state =
+                tls::status(&data_dir).map_err(|_| anyhow::anyhow!("host TLS status failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::OperatorConfigLoad { data_dir } => {
+            let state = operator_config::load(&data_dir)
+                .map_err(|_| anyhow::anyhow!("host operator configuration load failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::OperatorConfigSave {
+            data_dir,
+            upstream_origin,
+            local_port,
+            local_only,
+        } => {
+            let state = operator_config::save(&data_dir, &upstream_origin, local_port, local_only)
+                .map_err(|_| anyhow::anyhow!("host operator configuration save failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::PreferenceLoad { data_dir } => {
+            let state = preferences::load(&data_dir)
+                .map_err(|_| anyhow::anyhow!("host preference load failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::PreferenceSave { data_dir, enabled } => {
+            let state = preferences::save(&data_dir, enabled)
+                .map_err(|_| anyhow::anyhow!("host preference save failed"))?;
+            println!("{}", serde_json::to_string(&state)?);
+        }
+        Command::Id { data_dir } => {
+            let dir = data_dir.unwrap_or_else(|| default_data_dir("dsh-mobile-iroh"));
+            println!(
+                "{}",
+                tls::load_identity(&dir)
+                    .map_err(|_| anyhow::anyhow!("host identity unavailable"))?
+                    .public()
+            );
+        }
+        Command::Host {
+            data_dir,
+            pair,
+            proxy_target,
+            local_only,
+        } => {
+            host_main(
+                data_dir.unwrap_or_else(|| default_data_dir("dsh-mobile-iroh")),
+                pair,
+                proxy_target,
+                local_only,
+            )
+            .await?
+        }
+        Command::PhoneSim {
+            data_dir,
+            peer,
+            peer_address,
+            code,
+            name,
+            proxy_listen,
+            local_only,
+        } => {
+            phone_sim_main(
+                data_dir.unwrap_or_else(|| default_data_dir("dsh-mobile-iroh-phone-sim")),
+                peer,
+                peer_address,
+                code,
+                name,
+                proxy_listen,
+                local_only,
+            )
+            .await?
+        }
+    }
+    Ok(())
+}
+
+async fn host_main(
+    data_dir: PathBuf,
+    pair: bool,
+    proxy_target: Option<SocketAddr>,
+    local_only: bool,
+) -> Result<()> {
+    let proxy_target = proxy_target
+        .map(|target| check_loopback(target, false))
+        .transpose()?;
+    let _lease = lock_data_dir(&data_dir)?;
+    let store_path = data_dir.join("paired.json");
+    let store = load_store(&store_path)?;
+    let secret =
+        tls::load_identity(&data_dir).map_err(|_| anyhow::anyhow!("host identity unavailable"))?;
+    let endpoint = make_endpoint(secret, local_only).await?;
+    let (shutdown, mut shutdown_rx) = watch::channel(false);
+    let mut state = HostState {
+        store_path,
+        store,
+        pairing: None,
+        conns: HashMap::new(),
+        next_generation: 0,
+        shutdown,
+    };
+    emit(&PluginOut::Ready {
+        endpoint_id: endpoint.id().to_string(),
+        direct_addresses: endpoint
+            .addr()
+            .ip_addrs()
+            .map(ToString::to_string)
+            .collect(),
+        local_only,
+    });
+    if pair || state.store.devices.is_empty() {
+        begin_pairing(&mut state);
+    }
+    let state = Arc::new(Mutex::new(state));
+    let mut stdin = Box::pin(stdin_loop(tokio::io::stdin(), state.clone()));
+    let mut handlers = JoinSet::new();
+    let connections = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let streams = Arc::new(Semaphore::new(MAX_GLOBAL_PROXY_STREAMS));
+    let failure = loop {
+        tokio::select! {
+            result = &mut stdin => break result.err(),
+            _ = tokio::signal::ctrl_c() => break None,
+            _ = shutdown_rx.changed() => break Some(anyhow::anyhow!("authorization persistence failed")),
+            result = handlers.join_next(), if !handlers.is_empty() => {
+                if let Some(Err(error)) = result { eprintln!("host connection task failed: {error}"); }
+            }
+            incoming = endpoint.accept() => {
+                let Some(incoming) = incoming else { break None; };
+                let Ok(permit) = connections.clone().try_acquire_owned() else { incoming.refuse(); continue; };
+                let state = state.clone();
+                let streams = streams.clone();
+                handlers.spawn(async move {
+                    let _permit = permit;
+                    if let Err(error) = handle_phone(incoming, state, proxy_target, streams).await { eprintln!("inbound transport rejected: {error}"); }
+                });
+            }
+        }
+    };
+    {
+        let mut state = state.lock().await;
+        state.pairing = None;
+        for (_, peer) in state.conns.drain() {
+            peer.conn.close(0u8.into(), b"host stopped");
+        }
+    }
+    endpoint.close().await;
+    handlers.abort_all();
+    while handlers.join_next().await.is_some() {}
+    emit(&PluginOut::Stopped);
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn stdin_loop<R: AsyncRead + Unpin>(
+    mut input: R,
+    state: Arc<Mutex<HostState>>,
+) -> Result<()> {
+    loop {
+        // Keep no more than one bounded line; EOF at a line boundary is normal shutdown.
+        let mut first = [0u8; 1];
+        if input.read(&mut first).await? == 0 {
+            return Ok(());
+        }
+        let mut prefixed = tokio::io::AsyncReadExt::chain(&first[..], &mut input);
+        let line = read_line_bounded(&mut prefixed, MAX_STDIN_LINE).await?;
+        let command = match decode_command(&line) {
+            Ok(command) => command,
+            Err(_) => {
+                emit(&PluginOut::Error {
+                    code: "invalid-command".into(),
+                    message: "Invalid or unsupported sidecar command".into(),
+                });
+                return Err(anyhow::anyhow!("invalid sidecar command"));
+            }
+        };
+        let mut state = state.lock().await;
+        match command {
+            PluginIn::Shutdown => return Ok(()),
+            PluginIn::PairingBegin => begin_pairing(&mut state),
+            PluginIn::DeviceList => emit(&PluginOut::Devices {
+                devices: device_views(&state),
+            }),
+            PluginIn::DeviceForget { id } => {
+                let mut next = state.store.clone();
+                next.devices.retain(|device| device.id != id);
+                save_store(&state.store_path, &next).context("cannot persist device revocation")?;
+                state.store = next;
+                if let Some(peer) = state.conns.remove(&id) {
+                    peer.conn.close(1u8.into(), b"revoked");
+                }
+                emit(&PluginOut::Devices {
+                    devices: device_views(&state),
+                });
+            }
+        }
     }
 }
 
 async fn handle_phone(
     incoming: iroh::endpoint::Incoming,
     state: Arc<Mutex<HostState>>,
-    proxy_target: Option<std::net::SocketAddr>,
+    target: Option<SocketAddr>,
+    global_streams: Arc<Semaphore>,
 ) -> Result<()> {
-    let conn = incoming
+    let conn = timeout(HANDSHAKE_BUDGET, incoming)
         .await
-        .context(t("接受连接失败", "failed to accept the connection"))?;
+        .context("TLS handshake timed out")??;
+    let _close = CloseConnection(conn.clone());
     let remote = conn.remote_id().to_string();
-    let paired = {
-        state
-            .lock()
-            .await
-            .store
-            .devices
-            .iter()
-            .any(|d| d.id == remote)
-    };
-    let (mut send, mut recv) = conn
-        .accept_bi()
-        .await
-        .context(t("接受控制流失败", "failed to accept the control stream"))?;
+    let authorized = authorize(&conn, &remote, state.clone()).await?;
+    let generation = authorized.generation;
+    let result = serve_peer(&conn, &remote, authorized.control, target, global_streams).await;
+    let mut state = state.lock().await;
+    if state
+        .conns
+        .get(&remote)
+        .is_some_and(|peer| peer.generation == generation)
+    {
+        state.conns.remove(&remote);
+        emit(&PluginOut::PeerDisconnected { peer: remote });
+    }
+    result
+}
 
-    let first = tokio::time::timeout(
-        Duration::from_secs(15),
-        read_line_bounded(&mut recv, if paired { MAX_LINE } else { MAX_UNPAIRED_LINE }),
+struct AuthorizedPeer {
+    generation: u64,
+    control: (iroh::endpoint::SendStream, iroh::endpoint::RecvStream),
+}
+
+async fn authorize(
+    conn: &Connection,
+    remote: &str,
+    state: Arc<Mutex<HostState>>,
+) -> Result<AuthorizedPeer> {
+    let (mut send, mut recv) = timeout(HANDSHAKE_BUDGET, conn.accept_bi())
+        .await
+        .context("control stream timed out")??;
+    let first = timeout(
+        HANDSHAKE_BUDGET,
+        read_line_bounded(&mut recv, MAX_UNPAIRED_LINE),
     )
     .await
-    .context(t("等待首行超时", "timed out waiting for the first line"))??;
-    let hello: Wire = serde_json::from_str(&first).context(t(
-        "首行不是合法消息",
-        "the first line is not a valid message",
-    ))?;
-
-    let device_name = match (paired, hello) {
-        (true, Wire::Hello { name }) => name,
-        (false, Wire::Pair { code, name }) => {
-            let mut s = state.lock().await;
-            let verdict = match &mut s.pairing {
+    .context("control handshake timed out")??;
+    let message = decode_wire(&first)?;
+    let mut state = state.lock().await;
+    let paired = state.store.devices.iter().any(|device| device.id == remote);
+    let (name, ack) = match (paired, message) {
+        (true, Wire::Hello { name }) => (name, Wire::HelloOk),
+        (_, Wire::Pair { code, name }) => {
+            let verdict = match state.pairing.as_mut() {
                 None => Err(PAIR_NO_WINDOW),
-                Some(w) if tokio::time::Instant::now() > w.deadline => Err(PAIR_EXPIRED),
-                Some(w) if w.attempts >= PAIRING_MAX_ATTEMPTS => Err(PAIR_TOO_MANY_ATTEMPTS),
-                Some(w) => {
-                    w.attempts += 1;
-                    if w.code == code {
+                Some(window) if window.deadline <= tokio::time::Instant::now() => Err(PAIR_EXPIRED),
+                Some(window) if window.attempts >= PAIRING_MAX_ATTEMPTS => {
+                    Err(PAIR_TOO_MANY_ATTEMPTS)
+                }
+                Some(window) => {
+                    window.attempts += 1;
+                    if window.code == code {
                         Ok(())
+                    } else if window.attempts >= PAIRING_MAX_ATTEMPTS {
+                        Err(PAIR_TOO_MANY_ATTEMPTS)
                     } else {
                         Err(PAIR_BAD_CODE)
                     }
                 }
             };
-            match verdict {
-                Ok(()) => {
-                    s.pairing = None;
-                    s.store.devices.push(PairedDevice {
-                        id: remote.clone(),
-                        name: name.clone(),
-                        paired_at: chrono_now(),
+            if let Err(reason) = verdict {
+                if state.pairing.as_ref().is_some_and(|w| {
+                    w.attempts >= PAIRING_MAX_ATTEMPTS || w.deadline <= tokio::time::Instant::now()
+                }) {
+                    state.pairing = None;
+                    emit(&PluginOut::PairingClosed {
+                        reason: reason.into(),
                     });
-                    let (path, store) = (s.store_path.clone(), &s.store);
-                    save_store(&path, store).context(t(
-                        "写入配对白名单失败",
-                        "cannot write the paired-device list",
-                    ))?;
-                    emit(&PluginOut::PairingDone {
-                        peer: remote.clone(),
-                        name: name.clone(),
-                    });
-                    drop(s);
-                    write_line(&mut send, &encode_wire(&Wire::PairOk)?).await?;
-                    name
                 }
-                Err(reason) => {
-                    // 3 次错完关窗:6 位码空间 1e6,窗口内只许猜 3 次
-                    if s.pairing
-                        .as_ref()
-                        .is_some_and(|w| w.attempts >= PAIRING_MAX_ATTEMPTS)
-                    {
-                        s.pairing = None;
-                        emit(&PluginOut::PairingClosed {
-                            reason: PAIR_TOO_MANY_ATTEMPTS.into(),
-                        });
-                    }
-                    drop(s);
+                drop(state);
+                timeout(
+                    PROXY_OPEN_BUDGET,
                     write_line(
                         &mut send,
                         &encode_wire(&Wire::PairFail {
                             reason: reason.into(),
                         })?,
-                    )
-                    .await?;
-                    // finish + 短等:让 PairFail 行先于连接关闭到达对端,失败原因不被 close 吃掉
-                    let _ = send.finish();
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    conn.close(1u8.into(), b"pair-fail");
-                    return Ok(());
-                }
-            }
-        }
-        _ => {
-            conn.close(1u8.into(), b"protocol");
-            bail!(
-                "{}(paired={paired})",
-                t(
-                    "未按协议发首行",
-                    "the first line does not follow the protocol"
+                    ),
                 )
-            );
-        }
-    };
-
-    // 注册连接:下行走 mpsc,写坏即断开
-    let (tx, mut rx) = mpsc::channel::<String>(64);
-    {
-        let mut s = state.lock().await;
-        s.conns.insert(
-            remote.clone(),
-            PeerConn {
-                tx,
-                conn: conn.clone(),
-            },
-        );
-    }
-    emit(&PluginOut::PeerConnected {
-        peer: remote.clone(),
-        name: device_name,
-    });
-
-    // 连接刚建立时通常还在 relay 路径;给 NAT 打洞几秒升级窗口再报,
-    // 否则跨网验收会把「还没打通」误读成「打不通」。
-    {
-        let conn = conn.clone();
-        let peer = remote.clone();
-        tokio::spawn(async move {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
-            loop {
-                let selected = conn.paths().iter().find(|p| p.is_selected()).map(|p| {
-                    let addr = p.remote_addr();
-                    (
-                        if addr.is_ip() { "direct" } else { "relay" },
-                        format!("{addr:?}"),
-                    )
+                .await??;
+                send.finish()?;
+                let _ = timeout(Duration::from_secs(1), send.stopped()).await;
+                bail!("pairing rejected");
+            }
+            if !paired && state.store.devices.len() >= MAX_DEVICES {
+                bail!("paired-device limit reached");
+            }
+            let mut next = state.store.clone();
+            if let Some(device) = next.devices.iter_mut().find(|device| device.id == remote) {
+                device.name = name.clone();
+            } else {
+                next.devices.push(PairedDevice {
+                    id: remote.into(),
+                    name: name.clone(),
+                    paired_at: chrono_now(),
                 });
-                let done = tokio::time::Instant::now() >= deadline;
-                if let Some((kind, remote_addr)) = selected {
-                    if kind == "direct" || done {
-                        emit(&PluginOut::PeerPath {
-                            peer,
-                            kind: kind.to_string(),
-                            remote: remote_addr,
-                        });
-                        return;
-                    }
-                } else if done {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
             }
-        });
-    }
-
-    let writer = async {
-        while let Some(line) = rx.recv().await {
-            if write_line(&mut send, &line).await.is_err() {
-                break;
+            if let Err(error) = save_store(&state.store_path, &next) {
+                let _ = state.shutdown.send(true);
+                return Err(error).context("cannot persist new peer");
             }
-        }
-    };
-    let reader = async {
-        loop {
-            match read_line_bounded(&mut recv, MAX_LINE).await {
-                Ok(line) => match decode_wire(&line) {
-                    Ok(Wire::Decision { id, outcome }) => {
-                        emit(&PluginOut::Decision { id, outcome })
-                    }
-                    Ok(_) => eprintln!(
-                        "[host] {}{line}",
-                        t("忽略非决定消息: ", "ignoring a non-decision message: ")
-                    ),
-                    Err(e) => eprintln!(
-                        "[host] {}{e}",
-                        t("无法解析手机消息: ", "cannot parse the phone message: ")
-                    ),
-                },
-                Err(_) => break,
-            }
-        }
-    };
-    // 控制流建立(已配对)后,同一连接的后续 bi 流是代理流:首行 {"type":"proxy"},
-    // 之后整条流拼原始字节到 proxy_target(dsh web)。连接断开 accept_bi 报错,循环自然结束。
-    let proxy_state = state.clone();
-    let proxy_acceptor = async {
-        let permits = Arc::new(tokio::sync::Semaphore::new(64));
-        // 手机连上却看不到界面时,唯一能区分「WebView 压根没发请求」和「发了但转不通」
-        // 的信号就是这里。只报第一条:一个页面会开很多条流,每条都打就成了刷屏。
-        let mut announced = false;
-        while let Ok((psend, mut precv)) = conn.accept_bi().await {
-            if !announced {
-                announced = true;
-                emit(&PluginOut::ProxyOpened);
-            }
-            let Some(target) = proxy_target else {
-                eprintln!(
-                    "[host] {}",
-                    t(
-                        "未配置 --proxy-target,拒绝代理流",
-                        "no --proxy-target configured; refusing the proxy stream"
-                    )
-                );
-                continue;
-            };
-            let permit = permits
-                .clone()
-                .acquire_owned()
-                .await
-                .expect("the semaphore is never closed");
-            let auth_state = proxy_state.clone();
-            tokio::spawn(async move {
-                let _permit = permit;
-                match read_line_bounded(&mut precv, 256)
-                    .await
-                    .map(|l| decode_wire(&l))
-                {
-                    Ok(Ok(Wire::Proxy)) => {}
-                    _ => return,
-                }
-                let auth = auth_state.lock().await.proxy_auth.clone();
-                // 有认证材料时先把请求头读完改写;头之后的字节(请求体/升级后
-                // 的 WebSocket 帧)仍走裸转发
-                let head = match &auth {
-                    None => None,
-                    Some(auth) => match read_request_head(&mut precv).await {
-                        Ok(head) => Some(rewrite_request_head(&head, auth)),
-                        Err(e) => {
-                            eprintln!(
-                                "[host] {}{e:#}",
-                                t(
-                                    "代理流请求头读取失败: ",
-                                    "cannot read the proxy request head: "
-                                )
-                            );
-                            return;
-                        }
-                    },
-                };
-                let Ok(mut tcp) = tokio::net::TcpStream::connect(target).await else {
-                    eprintln!(
-                        "[host] {}{target}{}",
-                        t("代理流无法连接 ", "the proxy stream cannot reach "),
-                        t("(dsh web 未启动?)", " (is dsh web running?)")
-                    );
-                    return;
-                };
-                if let Some(head) = head {
-                    use tokio::io::AsyncWriteExt as _;
-                    if tcp.write_all(head.as_bytes()).await.is_err() {
-                        return;
-                    }
-                }
-                let mut stream = tokio::io::join(precv, psend);
-                let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
+            state.store = next;
+            state.pairing = None;
+            emit(&PluginOut::PairingDone {
+                peer: remote.into(),
+                name: name.clone(),
             });
+            (name, Wire::PairOk)
         }
+        _ => bail!("unauthorized or invalid control handshake"),
     };
-    tokio::join!(writer, reader, proxy_acceptor);
-
-    {
-        let mut s = state.lock().await;
-        s.conns.remove(&remote);
+    // Keep authorization and registration indivisible with respect to revocation.
+    // The peer write is bounded and only contains a small handshake ACK.
+    timeout(
+        PROXY_OPEN_BUDGET,
+        write_line(&mut send, &encode_wire(&ack)?),
+    )
+    .await??;
+    state.next_generation = state
+        .next_generation
+        .checked_add(1)
+        .context("connection generation exhausted")?;
+    let generation = state.next_generation;
+    if let Some(previous) = state.conns.insert(
+        remote.into(),
+        PeerConn {
+            generation,
+            conn: conn.clone(),
+        },
+    ) {
+        previous.conn.close(1u8.into(), b"replaced");
     }
-    emit(&PluginOut::PeerDisconnected { peer: remote });
-    Ok(())
+    drop(state);
+    emit(&PluginOut::PeerConnected {
+        peer: remote.into(),
+        name,
+    });
+    Ok(AuthorizedPeer {
+        generation,
+        control: (send, recv),
+    })
 }
 
-/// ISO-8601 UTC 当前时间(避免引 chrono,秒级精度够用)
+async fn serve_peer(
+    conn: &Connection,
+    remote: &str,
+    control_stream: (iroh::endpoint::SendStream, iroh::endpoint::RecvStream),
+    target: Option<SocketAddr>,
+    global_streams: Arc<Semaphore>,
+) -> Result<()> {
+    let (_send, mut recv) = control_stream;
+    let mut streams = JoinSet::new();
+    let local_streams = Arc::new(Semaphore::new(MAX_PROXY_STREAMS));
+    let mut path_tick = tokio::time::interval(Duration::from_millis(500));
+    let mut reported_path = None;
+    let mut proxy_announced = false;
+    let control = read_line_bounded(&mut recv, MAX_UNPAIRED_LINE);
+    tokio::pin!(control);
+    let result = loop {
+        tokio::select! {
+            result = &mut control => break result.and_then(|line| { decode_wire(&line)?; bail!("unexpected post-handshake control message") }),
+            _ = conn.closed() => break Ok(()),
+            _ = path_tick.tick() => {
+                let selected = conn.paths().iter().find(|p| p.is_selected()).map(|p| {
+                    let address = p.remote_addr();
+                    (if address.is_ip() { "direct" } else { "relay" }.to_string(), format!("{address:?}"))
+                });
+                if selected != reported_path {
+                    if let Some((kind, address)) = &selected { emit(&PluginOut::PeerPath { peer: remote.into(), kind: kind.clone(), remote: address.clone() }); }
+                    reported_path = selected;
+                }
+            }
+            _ = streams.join_next(), if !streams.is_empty() => {},
+            incoming = conn.accept_bi() => {
+                let (mut send, mut recv) = match incoming { Ok(value) => value, Err(_) => break Ok(()) };
+                let (Some(target), Ok(local), Ok(global)) = (target, local_streams.clone().try_acquire_owned(), global_streams.clone().try_acquire_owned()) else {
+                    let _ = send.reset(2u8.into()); let _ = recv.stop(2u8.into()); continue;
+                };
+                let conn = conn.clone();
+                if !proxy_announced { emit(&PluginOut::ProxyOpened { peer: remote.into() }); proxy_announced = true; }
+                streams.spawn(async move {
+                    let (_local, _global) = (local, global);
+                    let result = async {
+                        let line = timeout(PROXY_OPEN_BUDGET, read_line_bounded(&mut recv, 128)).await??;
+                        if decode_wire(&line)? != Wire::Proxy { bail!("proxy stream discriminator required"); }
+                        let mut tcp = timeout(PROXY_OPEN_BUDGET, tokio::net::TcpStream::connect(target)).await??;
+                        let mut stream = tokio::io::join(recv, send);
+                        tokio::select! { result = tokio::io::copy_bidirectional(&mut tcp, &mut stream) => { result?; }, _ = conn.closed() => {} }
+                        Ok::<(), anyhow::Error>(())
+                    }.await;
+                    if let Err(error) = result { eprintln!("proxy stream rejected: {error}"); }
+                });
+            }
+        }
+    };
+    conn.close(0u8.into(), b"control closed");
+    streams.abort_all();
+    while streams.join_next().await.is_some() {}
+    result
+}
+
 fn chrono_now() -> String {
-    let secs = std::time::SystemTime::now()
+    let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("unix:{secs}")
+        .unwrap_or_default()
+        .as_secs();
+    format!("unix:{seconds}")
 }
 
 async fn phone_sim_main(
     data_dir: PathBuf,
-    peer: String,
+    peer: EndpointId,
+    addresses: Vec<SocketAddr>,
     code: Option<String>,
     name: String,
-    auto: String,
-    delay: u64,
-    proxy_listen: Option<std::net::SocketAddr>,
+    listen: Option<SocketAddr>,
+    local_only: bool,
 ) -> Result<()> {
-    let peer: EndpointId = peer.trim().parse().map_err(|e| {
-        anyhow::anyhow!(
-            "{}{e}",
-            t("无效的 --peer 设备 ID: ", "invalid --peer device ID: ")
-        )
-    })?;
-    let secret = load_or_create_secret(&data_dir.join("identity.key"))?;
-    let ep = endpoint_builder().secret_key(secret).bind().await?;
-    eprintln!("[phone-sim] {}{}", t("本机 ID: ", "local ID: "), ep.id());
-    let conn = ep
-        .connect(peer, ALPN)
-        .await
-        .context(t("连接 host 失败", "failed to connect to the host"))?;
-    let (mut send, mut recv) = conn
-        .open_bi()
-        .await
-        .context(t("打开控制流失败", "failed to open the control stream"))?;
-
-    let first = match &code {
-        Some(code) => Wire::Pair {
-            code: code.clone(),
-            name: name.clone(),
-        },
-        None => Wire::Hello { name: name.clone() },
-    };
-    write_line(&mut send, &serde_json::to_string(&first)?).await?;
-    if code.is_some() {
-        let resp = read_line_bounded(&mut recv, MAX_LINE).await?;
-        match decode_wire(&resp)? {
-            Wire::PairOk => eprintln!("[phone-sim] {}", t("配对成功", "paired")),
-            Wire::PairFail { reason } => bail!(
-                "{}{}",
-                t("配对失败: ", "pairing failed: "),
-                pair_fail_text(&reason)
-            ),
-            _ => bail!(
-                "{}{resp}",
-                t(
-                    "配对应答不符合协议: ",
-                    "the pairing reply does not follow the protocol: "
-                )
-            ),
+    validate_device_name(&name)?;
+    let listen = listen
+        .map(|address| check_loopback(address, true))
+        .transpose()?;
+    if local_only
+        && (addresses.is_empty()
+            || addresses
+                .iter()
+                .any(|address| check_loopback(*address, false).is_err()))
+    {
+        bail!("local-only phone requires explicit loopback peer addresses");
+    }
+    let endpoint = make_endpoint(
+        tls::load_identity(&data_dir).map_err(|_| anyhow::anyhow!("host identity unavailable"))?,
+        local_only,
+    )
+    .await?;
+    let address = addresses
+        .into_iter()
+        .fold(EndpointAddr::new(peer), |addr, ip| addr.with_ip_addr(ip));
+    let result = async {
+        let conn = timeout(CONNECT_BUDGET, endpoint.connect(address, ALPN)).await.context("host connection timed out")??;
+        let _close = CloseConnection(conn.clone());
+        let (mut send, mut recv) = timeout(HANDSHAKE_BUDGET, conn.open_bi()).await??;
+        let first = match code { Some(code) => Wire::Pair { code, name }, None => Wire::Hello { name } };
+        let pairing = matches!(first, Wire::Pair { .. });
+        timeout(HANDSHAKE_BUDGET, write_line(&mut send, &encode_wire(&first)?)).await??;
+        let response = timeout(HANDSHAKE_BUDGET, read_line_bounded(&mut recv, MAX_UNPAIRED_LINE)).await??;
+        match (pairing, decode_wire(&response)?) {
+            (true, Wire::PairOk) => eprintln!("paired"),
+            (false, Wire::HelloOk) => eprintln!("authenticated"),
+            (_, Wire::PairFail { reason }) => bail!("{}", pair_fail_text(&reason)),
+            _ => bail!("host did not acknowledge control handshake"),
         }
-    }
-    eprintln!(
-        "[phone-sim] {}{auto}({delay}ms){}",
-        t("已连接,应答策略 ", "connected, reply policy "),
-        t(",等待审批请求…", ", waiting for approval requests…")
-    );
-
-    if let Some(listen) = proxy_listen {
-        let listener = tokio::net::TcpListener::bind(listen)
-            .await
-            .with_context(|| {
-                format!(
-                    "{}{listen}",
-                    t("本地代理监听失败: ", "the local proxy could not listen on ")
-                )
-            })?;
-        eprintln!(
-            "[phone-sim] {}http://{listen}{}",
-            t("代理就绪: ", "proxy ready: "),
-            t(
-                " → [iroh] → host 那台的 dsh web",
-                " → [iroh] → the dsh web on the host machine"
-            ),
-        );
-        let pconn = conn.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut tcp, _)) = listener.accept().await else {
-                    break;
-                };
-                let conn = pconn.clone();
-                tokio::spawn(async move {
-                    let Ok((mut psend, precv)) = conn.open_bi().await else {
-                        return;
-                    };
-                    if write_line(
-                        &mut psend,
-                        &encode_wire(&Wire::Proxy).expect("Wire is serializable"),
-                    )
-                    .await
-                    .is_err()
-                    {
-                        return;
-                    }
-                    let mut stream = tokio::io::join(precv, psend);
-                    let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
-                });
+        let listener = match listen { Some(address) => Some(tokio::net::TcpListener::bind(address).await?), None => None };
+        if let Some(listener) = &listener { emit(&PluginOut::ProxyReady { origin: format!("http://{}", listener.local_addr()?) }); }
+        let mut proxies = JoinSet::new();
+        let slots = Arc::new(Semaphore::new(MAX_PROXY_STREAMS));
+        let control = read_line_bounded(&mut recv, MAX_UNPAIRED_LINE);
+        tokio::pin!(control);
+        let outcome = loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => break Ok(()),
+                _ = conn.closed() => break Ok(()),
+                _ = &mut control => break Ok(()),
+                _ = proxies.join_next(), if !proxies.is_empty() => {},
+                incoming = async { match &listener { Some(listener) => listener.accept().await, None => std::future::pending().await } } => {
+                    let (mut tcp, _) = incoming?;
+                    let Ok(slot) = slots.clone().try_acquire_owned() else { continue; };
+                    let conn = conn.clone();
+                    proxies.spawn(async move {
+                        let _slot = slot;
+                        let result = async {
+                            let (mut send, recv) = timeout(PROXY_OPEN_BUDGET, conn.open_bi()).await??;
+                            timeout(PROXY_OPEN_BUDGET, write_line(&mut send, &encode_wire(&Wire::Proxy)?)).await??;
+                            let mut stream = tokio::io::join(recv, send);
+                            tokio::select! { result = tokio::io::copy_bidirectional(&mut tcp, &mut stream) => { result?; }, _ = conn.closed() => {} }
+                            Ok::<(), anyhow::Error>(())
+                        }.await;
+                        if let Err(error) = result { eprintln!("local proxy failed: {error:#}"); }
+                    });
+                }
             }
-        });
-    }
-
-    loop {
-        let line = tokio::select! {
-            r = read_line_bounded(&mut recv, MAX_LINE) => r?,
-            reason = conn.closed() => bail!("{}{reason}", t("连接断开: ", "connection closed: ")),
-            _ = tokio::signal::ctrl_c() => break,
         };
-        match decode_wire(&line)? {
-            Wire::Approval {
-                id,
-                tool_name,
-                reason,
-            } => {
-                eprintln!(
-                    "[phone-sim] {}id={id} tool={tool_name}",
-                    t("审批请求 ", "approval request ")
-                );
-                eprintln!("[phone-sim]   {}{reason}", t("理由: ", "reason: "));
-                tokio::time::sleep(Duration::from_millis(delay)).await;
-                let outcome = if auto == "allow" {
-                    "allowed-once"
-                } else {
-                    "rejected"
-                };
-                eprintln!("[phone-sim] {}{outcome}", t("应答: ", "replied: "));
-                write_line(
-                    &mut send,
-                    &encode_wire(&Wire::Decision {
-                        id,
-                        outcome: outcome.into(),
-                    })?,
-                )
-                .await?;
+        conn.close(0u8.into(), b"phone stopped");
+        proxies.abort_all();
+        while proxies.join_next().await.is_some() {}
+        outcome
+    }.await;
+    endpoint.close().await;
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt as _;
+
+    fn test_root(label: &str) -> PathBuf {
+        #[cfg(windows)]
+        let parent = PathBuf::from(std::env::var_os("USERPROFILE").unwrap());
+        #[cfg(not(windows))]
+        let parent = std::env::temp_dir();
+        let root = parent.join(format!(".iroh-host-{}-{label}", std::process::id()));
+        create_private_directory(&root).unwrap();
+        root
+    }
+
+    struct TestHost {
+        endpoint: Endpoint,
+        state: Arc<Mutex<HostState>>,
+        acceptor: tokio::task::JoinHandle<()>,
+        root: PathBuf,
+    }
+
+    impl TestHost {
+        async fn start(target: Option<SocketAddr>) -> Self {
+            let key = iroh::SecretKey::generate();
+            let root = test_root(&key.public().to_string());
+            let endpoint = make_endpoint(key, true).await.unwrap();
+            let (shutdown, _) = watch::channel(false);
+            let state = Arc::new(Mutex::new(HostState {
+                store_path: root.join("paired.json"),
+                store: PairedStore::default(),
+                pairing: Some(PairingWindow {
+                    code: "123456".into(),
+                    deadline: tokio::time::Instant::now() + PAIRING_TTL,
+                    attempts: 0,
+                }),
+                conns: HashMap::new(),
+                next_generation: 0,
+                shutdown,
+            }));
+            let server = endpoint.clone();
+            let shared = state.clone();
+            let acceptor = tokio::spawn(async move {
+                let mut handlers = JoinSet::new();
+                let streams = Arc::new(Semaphore::new(MAX_GLOBAL_PROXY_STREAMS));
+                loop {
+                    tokio::select! {
+                        incoming = server.accept() => {
+                            let Some(incoming) = incoming else { break; };
+                            let state = shared.clone(); let streams = streams.clone();
+                            handlers.spawn(async move { let _ = handle_phone(incoming, state, target, streams).await; });
+                        }
+                        _ = handlers.join_next(), if !handlers.is_empty() => {},
+                    }
+                }
+                handlers.abort_all();
+                while handlers.join_next().await.is_some() {}
+            });
+            Self {
+                endpoint,
+                state,
+                acceptor,
+                root,
             }
-            Wire::ApprovalCancel { id } => eprintln!(
-                "[phone-sim] {}id={id}",
-                t("审批已取消 ", "approval cancelled ")
-            ),
-            _ => eprintln!(
-                "[phone-sim] {}{line}",
-                t("忽略消息: ", "ignoring message: ")
-            ),
+        }
+
+        async fn client(
+            &self,
+            key: iroh::SecretKey,
+            message: &str,
+        ) -> (
+            Endpoint,
+            Connection,
+            iroh::endpoint::SendStream,
+            iroh::endpoint::RecvStream,
+        ) {
+            let endpoint = make_endpoint(key, true).await.unwrap();
+            let conn = timeout(
+                Duration::from_secs(5),
+                endpoint.connect(self.endpoint.addr(), ALPN),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let (mut send, recv) = conn.open_bi().await.unwrap();
+            write_line(&mut send, message).await.unwrap();
+            (endpoint, conn, send, recv)
+        }
+
+        async fn pair(
+            &self,
+            key: iroh::SecretKey,
+        ) -> (
+            Endpoint,
+            Connection,
+            iroh::endpoint::SendStream,
+            iroh::endpoint::RecvStream,
+        ) {
+            let message = encode_wire(&Wire::Pair {
+                code: "123456".into(),
+                name: "test phone".into(),
+            })
+            .unwrap();
+            let (endpoint, conn, send, mut recv) = self.client(key, &message).await;
+            let reply = timeout(Duration::from_secs(5), read_line_bounded(&mut recv, 512))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(decode_wire(&reply).unwrap(), Wire::PairOk);
+            (endpoint, conn, send, recv)
+        }
+
+        async fn close(self) {
+            self.endpoint.close().await;
+            timeout(Duration::from_secs(5), self.acceptor)
+                .await
+                .unwrap()
+                .unwrap();
+            std::fs::remove_dir_all(self.root).unwrap();
         }
     }
-    ep.close().await;
-    Ok(())
+
+    async fn wait_until_empty(state: &Arc<Mutex<HostState>>) {
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if state.lock().await.conns.is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    async fn open_proxy(
+        conn: &Connection,
+    ) -> (iroh::endpoint::SendStream, iroh::endpoint::RecvStream) {
+        let (mut send, recv) = conn.open_bi().await.unwrap();
+        write_line(&mut send, &encode_wire(&Wire::Proxy).unwrap())
+            .await
+            .unwrap();
+        (send, recv)
+    }
+
+    #[tokio::test]
+    async fn real_quic_rejects_unversioned_unknown_and_unpaired_hello() {
+        let host = TestHost::start(None).await;
+        for message in [
+            r#"{"type":"pair","code":"123456","name":"phone"}"#,
+            r#"{"version":2,"type":"pair","code":"123456","name":"phone"}"#,
+            r#"{"version":1,"type":"pair","code":"123456","name":"phone","unknown":true}"#,
+            r#"{"version":1,"type":"hello","name":"phone"}"#,
+        ] {
+            let (endpoint, conn, _send, mut recv) =
+                host.client(iroh::SecretKey::generate(), message).await;
+            assert!(
+                timeout(Duration::from_secs(5), read_line_bounded(&mut recv, 512))
+                    .await
+                    .unwrap()
+                    .is_err()
+            );
+            timeout(Duration::from_secs(5), conn.closed())
+                .await
+                .unwrap();
+            endpoint.close().await;
+            assert!(host.state.lock().await.store.devices.is_empty());
+        }
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn real_quic_pair_persist_reconnect_replace_and_control_eof() {
+        let host = TestHost::start(None).await;
+        let key = iroh::SecretKey::generate();
+        let id = key.public().to_string();
+        let (first_ep, first, _send, _recv) = host.pair(key.clone()).await;
+        assert_eq!(
+            load_store(&host.state.lock().await.store_path)
+                .unwrap()
+                .devices
+                .len(),
+            1
+        );
+        let hello = encode_wire(&Wire::Hello {
+            name: "same phone".into(),
+        })
+        .unwrap();
+        let (next_ep, next, mut send, mut recv) = host.client(key, &hello).await;
+        assert_eq!(
+            decode_wire(&read_line_bounded(&mut recv, 512).await.unwrap()).unwrap(),
+            Wire::HelloOk
+        );
+        timeout(Duration::from_secs(5), first.closed())
+            .await
+            .unwrap();
+        let generation = host.state.lock().await.conns.get(&id).unwrap().generation;
+        assert_eq!(generation, 2);
+        first_ep.close().await;
+        assert_eq!(
+            host.state.lock().await.conns.get(&id).unwrap().generation,
+            generation
+        );
+        send.finish().unwrap();
+        timeout(Duration::from_secs(5), next.closed())
+            .await
+            .unwrap();
+        wait_until_empty(&host.state).await;
+        next_ep.close().await;
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn real_quic_forwards_http_websocket_and_binary_without_rewrite() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = listener.local_addr().unwrap();
+        let backend = tokio::spawn(async move {
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                tcp.read_exact(&mut byte).await.unwrap();
+                request.push(byte[0]);
+            }
+            assert_eq!(request, b"GET /private HTTP/1.1\r\nHost: secure.iroh.localhost\r\nCookie: device=phone\r\nOrigin: https://secure.iroh.localhost\r\n\r\n");
+            tcp.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nConnection: close\r\n\r\nbody").await.unwrap();
+            drop(tcp);
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                tcp.read_exact(&mut byte).await.unwrap();
+                request.push(byte[0]);
+            }
+            assert!(request.windows(18).any(|s| s == b"Upgrade: websocket"));
+            tcp.write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n").await.unwrap();
+            let mut frame = [0u8; 8];
+            tcp.read_exact(&mut frame).await.unwrap();
+            assert_eq!(frame, [0x81, 0x82, 1, 2, 3, 4, b'h' ^ 1, b'i' ^ 2]);
+            tcp.write_all(&[0x81, 2, b'h', b'i']).await.unwrap();
+            drop(tcp);
+            let (mut tcp, _) = listener.accept().await.unwrap();
+            let mut bytes = [0u8; 6];
+            tcp.read_exact(&mut bytes).await.unwrap();
+            assert_eq!(bytes, [0x16, 0x03, 0x03, 0, 1, 0xff]);
+            tcp.write_all(&bytes).await.unwrap();
+        });
+        let host = TestHost::start(Some(target)).await;
+        let (ep, conn, _control_send, _control_recv) = host.pair(iroh::SecretKey::generate()).await;
+        let (mut send, mut recv) = open_proxy(&conn).await;
+        send.write_all(b"GET /private HTTP/1.1\r\nHost: secure.iroh.localhost\r\nCookie: device=phone\r\nOrigin: https://secure.iroh.localhost\r\n\r\n").await.unwrap();
+        send.finish().unwrap();
+        let response = timeout(Duration::from_secs(5), recv.read_to_end(4096))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response, b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nConnection: close\r\n\r\nbody");
+        let (mut send, mut recv) = open_proxy(&conn).await;
+        send.write_all(b"GET /ws HTTP/1.1\r\nHost: secure.iroh.localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n").await.unwrap();
+        let expected = b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+        let mut head = vec![0u8; expected.len()];
+        recv.read_exact(&mut head).await.unwrap();
+        assert_eq!(head, expected);
+        send.write_all(&[0x81, 0x82, 1, 2, 3, 4, b'h' ^ 1, b'i' ^ 2])
+            .await
+            .unwrap();
+        let mut frame = [0u8; 4];
+        recv.read_exact(&mut frame).await.unwrap();
+        assert_eq!(frame, [0x81, 2, b'h', b'i']);
+        let (mut send, mut recv) = open_proxy(&conn).await;
+        send.write_all(&[0x16, 0x03, 0x03, 0, 1, 0xff])
+            .await
+            .unwrap();
+        let mut bytes = [0u8; 6];
+        recv.read_exact(&mut bytes).await.unwrap();
+        assert_eq!(bytes, [0x16, 0x03, 0x03, 0, 1, 0xff]);
+        timeout(Duration::from_secs(5), backend)
+            .await
+            .unwrap()
+            .unwrap();
+        ep.close().await;
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn real_quic_revocation_closes_proxy_and_survives_reload() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = listener.local_addr().unwrap();
+        let host = TestHost::start(Some(target)).await;
+        let key = iroh::SecretKey::generate();
+        let peer = key.public().to_string();
+        let (ep, conn, _control_send, _control_recv) = host.pair(key.clone()).await;
+        let (mut send, mut recv) = open_proxy(&conn).await;
+        send.write_all(b"alive").await.unwrap();
+        let (mut backend, _) = timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut bytes = [0; 5];
+        backend.read_exact(&mut bytes).await.unwrap();
+        let command = format!("{{\"version\":1,\"type\":\"device-forget\",\"id\":\"{peer}\"}}\n");
+        stdin_loop(command.as_bytes(), host.state.clone())
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(5), conn.closed())
+            .await
+            .unwrap();
+        assert!(
+            timeout(Duration::from_secs(5), read_line_bounded(&mut recv, 128))
+                .await
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(
+            timeout(Duration::from_secs(5), backend.read(&mut bytes))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        assert!(load_store(&host.state.lock().await.store_path)
+            .unwrap()
+            .devices
+            .is_empty());
+        let hello = encode_wire(&Wire::Hello {
+            name: "revoked phone".into(),
+        })
+        .unwrap();
+        let (again, rejected, _send, _recv) = host.client(key, &hello).await;
+        timeout(Duration::from_secs(5), rejected.closed())
+            .await
+            .unwrap();
+        again.close().await;
+        ep.close().await;
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn failed_pair_persistence_never_acknowledges_or_changes_authorization() {
+        let host = TestHost::start(None).await;
+        host.state.lock().await.store_path = host.root.clone();
+        let message = encode_wire(&Wire::Pair {
+            code: "123456".into(),
+            name: "phone".into(),
+        })
+        .unwrap();
+        let (ep, conn, _send, mut recv) = host.client(iroh::SecretKey::generate(), &message).await;
+        assert!(
+            timeout(Duration::from_secs(5), read_line_bounded(&mut recv, 512))
+                .await
+                .unwrap()
+                .is_err()
+        );
+        timeout(Duration::from_secs(5), conn.closed())
+            .await
+            .unwrap();
+        let state = host.state.lock().await;
+        assert!(state.store.devices.is_empty());
+        assert!(state.conns.is_empty());
+        drop(state);
+        ep.close().await;
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn wrong_pairing_codes_are_globally_limited_and_close_the_window() {
+        let host = TestHost::start(None).await;
+        for expected in [
+            PAIR_BAD_CODE,
+            PAIR_BAD_CODE,
+            PAIR_TOO_MANY_ATTEMPTS,
+            PAIR_NO_WINDOW,
+        ] {
+            let message = encode_wire(&Wire::Pair {
+                code: "999999".into(),
+                name: "phone".into(),
+            })
+            .unwrap();
+            let (ep, conn, _send, mut recv) =
+                host.client(iroh::SecretKey::generate(), &message).await;
+            let response = timeout(Duration::from_secs(5), read_line_bounded(&mut recv, 512))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                decode_wire(&response).unwrap(),
+                Wire::PairFail {
+                    reason: expected.into()
+                }
+            );
+            conn.close(0u8.into(), b"test completed");
+            ep.close().await;
+        }
+        assert!(host.state.lock().await.pairing.is_none());
+        assert!(host.state.lock().await.store.devices.is_empty());
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn already_paired_peer_can_explicitly_repair_only_with_a_fresh_valid_window() {
+        let host = TestHost::start(None).await;
+        let key = iroh::SecretKey::generate();
+        let (first_ep, first, _first_send, _first_recv) = host.pair(key.clone()).await;
+        let old_timestamp = host.state.lock().await.store.devices[0].paired_at.clone();
+        let pair = encode_wire(&Wire::Pair {
+            code: "123456".into(),
+            name: "phone".into(),
+        })
+        .unwrap();
+        let (refused_ep, refused, _send, mut recv) = host.client(key.clone(), &pair).await;
+        assert_eq!(
+            decode_wire(&read_line_bounded(&mut recv, 512).await.unwrap()).unwrap(),
+            Wire::PairFail {
+                reason: PAIR_NO_WINDOW.into()
+            }
+        );
+        refused.close(0u8.into(), b"test done");
+        refused_ep.close().await;
+        assert!(first.close_reason().is_none());
+        host.state.lock().await.pairing = Some(PairingWindow {
+            code: "123456".into(),
+            deadline: tokio::time::Instant::now() + PAIRING_TTL,
+            attempts: 0,
+        });
+        let (next_ep, next, mut next_send, _next_recv) = host.pair(key).await;
+        timeout(Duration::from_secs(5), first.closed())
+            .await
+            .unwrap();
+        let state = host.state.lock().await;
+        assert_eq!(state.store.devices.len(), 1);
+        assert_eq!(state.store.devices[0].paired_at, old_timestamp);
+        drop(state);
+        next_send.finish().unwrap();
+        timeout(Duration::from_secs(5), next.closed())
+            .await
+            .unwrap();
+        first_ep.close().await;
+        next_ep.close().await;
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn revoking_one_peer_keeps_other_authorized_sessions_alive() {
+        let host = TestHost::start(None).await;
+        let first_key = iroh::SecretKey::generate();
+        let first_id = first_key.public().to_string();
+        let (first_ep, first, _first_send, _first_recv) = host.pair(first_key).await;
+        host.state.lock().await.pairing = Some(PairingWindow {
+            code: "123456".into(),
+            deadline: tokio::time::Instant::now() + PAIRING_TTL,
+            attempts: 0,
+        });
+        let second_key = iroh::SecretKey::generate();
+        let second_id = second_key.public().to_string();
+        let (second_ep, second, mut second_send, _second_recv) = host.pair(second_key).await;
+        let command =
+            format!("{{\"version\":1,\"type\":\"device-forget\",\"id\":\"{first_id}\"}}\n");
+        stdin_loop(command.as_bytes(), host.state.clone())
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(5), first.closed())
+            .await
+            .unwrap();
+        assert!(second.close_reason().is_none());
+        assert!(host.state.lock().await.conns.contains_key(&second_id));
+        let store = load_store(&host.state.lock().await.store_path).unwrap();
+        assert_eq!(store.devices.len(), 1);
+        assert_eq!(store.devices[0].id, second_id);
+        second_send.finish().unwrap();
+        timeout(Duration::from_secs(5), second.closed())
+            .await
+            .unwrap();
+        first_ep.close().await;
+        second_ep.close().await;
+        host.close().await;
+    }
+
+    #[tokio::test]
+    async fn proxy_quota_and_open_deadline_release_resources() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = TestHost::start(Some(listener.local_addr().unwrap())).await;
+        let (ep, conn, mut control_send, _control_recv) =
+            host.pair(iroh::SecretKey::generate()).await;
+        let mut stalled = Vec::new();
+        for _ in 0..MAX_PROXY_STREAMS {
+            let (mut send, recv) = conn.open_bi().await.unwrap();
+            send.write_all(b"{").await.unwrap();
+            stalled.push((send, recv));
+        }
+        // Ordered bi stream IDs ensure the 33rd proxy is rejected rather than
+        // queued behind 32 peers that never complete their discriminator.
+        let (mut excess_send, mut excess_recv) = conn.open_bi().await.unwrap();
+        write_line(&mut excess_send, &encode_wire(&Wire::Proxy).unwrap())
+            .await
+            .unwrap();
+        let mut byte = [0u8; 1];
+        assert!(timeout(Duration::from_secs(3), excess_recv.read(&mut byte))
+            .await
+            .unwrap()
+            .is_err());
+        assert!(timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .is_err());
+        assert!(matches!(
+            timeout(
+                PROXY_OPEN_BUDGET + Duration::from_secs(2),
+                stalled[0].1.read(&mut byte)
+            )
+            .await
+            .unwrap(),
+            Err(_) | Ok(None)
+        ));
+        control_send.finish().unwrap();
+        timeout(Duration::from_secs(5), conn.closed())
+            .await
+            .unwrap();
+        wait_until_empty(&host.state).await;
+        ep.close().await;
+        host.close().await;
+    }
+
+    #[test]
+    fn profile_lock_rejects_concurrent_hosts_and_releases_on_drop() {
+        let dir = test_root("lock");
+        let first = lock_data_dir(&dir).unwrap();
+        assert!(lock_data_dir(&dir).is_err());
+        drop(first);
+        drop(lock_data_dir(&dir).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn loopback_targets_are_strict() {
+        for address in ["127.0.0.1:3443", "[::1]:3443"] {
+            assert!(check_loopback(address.parse().unwrap(), false).is_ok());
+        }
+        for address in [
+            "0.0.0.0:3443",
+            "[::]:3443",
+            "192.168.1.1:3443",
+            "127.0.0.1:0",
+        ] {
+            assert!(check_loopback(address.parse().unwrap(), false).is_err());
+        }
+    }
+    #[test]
+    fn stdio_is_versioned_and_exact() {
+        for line in [
+            r#"{"version":1,"type":"shutdown"}"#,
+            r#"{"version":1,"type":"device-list"}"#,
+            r#"{"version":1,"type":"pairing-begin"}"#,
+        ] {
+            assert!(decode_command(line).is_ok());
+        }
+        for line in [
+            r#"{"type":"shutdown"}"#,
+            r#"{"version":2,"type":"shutdown"}"#,
+            r#"{"version":1,"type":"shutdown","extra":1}"#,
+            r#"{"version":1,"type":"shutdown","id":"x"}"#,
+            r#"{"version":1,"type":"shutdown","id":null}"#,
+            r#"{"version":1,"type":"proxy-auth","cookie":"private","authority":"x"}"#,
+        ] {
+            assert!(decode_command(line).is_err());
+        }
+    }
+    #[test]
+    fn broken_stores_are_not_first_install() {
+        let dir = test_root("store");
+        let path = dir.join("paired.json");
+        assert!(load_store(&path).unwrap().devices.is_empty());
+        std::fs::write(&path, b"broken").unwrap();
+        assert!(load_store(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"broken");
+        assert!(load_store(&dir).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn line_reader_bounds_bytes_preserves_payload_and_rejects_invalid_utf8() {
+        let mut input = &b"1234\npayload"[..];
+        assert_eq!(read_line_bounded(&mut input, 4).await.unwrap(), "1234");
+        assert_eq!(input, b"payload");
+        assert!(read_line_bounded(&mut &b"12345\n"[..], 4).await.is_err());
+        assert!(read_line_bounded(&mut &b"\xff\n"[..], 4).await.is_err());
+        assert!(read_line_bounded(&mut &b"unterminated"[..], 16)
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn full_roster_fits_bounded_parent_event() {
+        let devices: Vec<_> = (0..MAX_DEVICES)
+            .map(|_| DeviceView {
+                id: iroh::SecretKey::generate().public().to_string(),
+                name: "🐳".repeat(64),
+                paired_at: "unix:18446744073709551615".into(),
+                online: true,
+            })
+            .collect();
+        let mut event = serde_json::to_value(PluginOut::Devices { devices }).unwrap();
+        event
+            .as_object_mut()
+            .unwrap()
+            .insert("version".into(), 1.into());
+        assert!(serde_json::to_vec(&event).unwrap().len() < MAX_STDIN_LINE);
+    }
 }

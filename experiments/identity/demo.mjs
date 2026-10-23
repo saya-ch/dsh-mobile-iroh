@@ -1,3 +1,4 @@
+// This HTTP/identity demonstration does not start an iroh endpoint.
 import { EndpointIdentity, LocalGateway } from './poc.mjs';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';

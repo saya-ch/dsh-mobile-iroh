@@ -1,137 +1,124 @@
-import { createServer } from 'node:http'
-import { createInterface } from 'node:readline'
-import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { execFile } from 'node:child_process'
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { createServer, request } from 'node:http'
+import { connect } from 'node:net'
+import { join } from 'node:path'
+import { createSidecarFixtureRoot, firstPartyExecutable, startHostAndPhone, startPhone, waitForSidecarEvent } from './first-party-fixture.mjs'
 
-const here = dirname(fileURLToPath(import.meta.url))
-const defaultBinary = resolve(here, '../artifacts/host-0.1.22/package/bin/tether-host.exe')
-const binary = process.env.TETHER_HOST_BIN ?? defaultBinary
-
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
-
-const freePort = async () => {
-  const server = createServer()
-  await new Promise((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
-  })
-  const port = server.address().port
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-  return port
+const executable = process.env.DSH_IROH_HOST_BIN ?? firstPartyExecutable
+const ownedRoot = await createSidecarFixtureRoot()
+const root = ownedRoot.directory
+const sockets = new Set()
+let fixture, extraPhone, target
+const bounded = async (promise, milliseconds, message) => {
+  let timer
+  try { return await Promise.race([promise, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds) })]) }
+  finally { clearTimeout(timer) }
 }
-
-const waitFor = async (events, predicate, timeout = 20_000) => {
-  const deadline = Date.now() + timeout
-  while (Date.now() < deadline) {
-    const found = events.find(predicate)
-    if (found) return found
-    await sleep(50)
-  }
-  throw new Error(`timed out waiting for event; observed ${JSON.stringify(events)}`)
-}
-
-const spawnSidecar = (args) => {
-  const child = spawn(binary, ['--lang', 'en', ...args], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
+const payload = Buffer.from([0, 1, 2, 42, 127, 128, 255])
+const http = (origin, path, body) => new Promise((resolve, reject) => {
+  const url = new URL(path, origin)
+  const outgoing = request(url, { agent: false, method: body === undefined ? 'GET' : 'POST', headers: { cookie: 'device=smoke', origin: 'https://foreign.invalid', 'x-smoke': 'unchanged' } }, (response) => {
+    const chunks = []
+    response.on('data', (chunk) => chunks.push(chunk))
+    response.once('error', reject)
+    response.once('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks) }))
   })
-  const stdout = []
-  const stderr = []
-  const output = createInterface({ input: child.stdout })
-  output.on('line', (line) => {
-    try {
-      stdout.push(JSON.parse(line))
-    } catch {
-      stdout.push({ type: 'unparsed-stdout', line })
+  outgoing.setTimeout(5000, () => outgoing.destroy(new Error('HTTP smoke timeout')))
+  outgoing.once('error', reject)
+  outgoing.end(body)
+})
+
+const websocket = (origin) => new Promise((resolve, reject) => {
+  const url = new URL(origin), socket = connect(Number(url.port), url.hostname)
+  const key = 'MDEyMzQ1Njc4OWFiY2RlZg=='
+  const expected = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+  let pending = Buffer.alloc(0), upgraded = false, finished = false
+  const close = () => socket.destroy()
+  const fail = (error) => { finished = true; close(); reject(error) }
+  socket.setTimeout(5000, () => fail(new Error('WebSocket smoke timeout')))
+  socket.once('error', fail)
+  socket.once('close', () => { if (!finished) fail(new Error('WebSocket closed before echo')) })
+  socket.once('connect', () => socket.write(`GET /ws HTTP/1.1\r\nHost: ${url.host}\r\nOrigin: https://foreign.invalid\r\nCookie: device=smoke\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`))
+  socket.on('data', (chunk) => {
+    pending = Buffer.concat([pending, chunk])
+    if (pending.length > 16384) { fail(new Error('WebSocket response exceeded budget')); return }
+    if (!upgraded) {
+      const split = pending.indexOf('\r\n\r\n')
+      if (split === -1) return
+      const headers = pending.subarray(0, split).toString('ascii')
+      if (!headers.startsWith('HTTP/1.1 101 ') || !headers.includes(`Sec-WebSocket-Accept: ${expected}`)) { fail(new Error('WebSocket upgrade mismatch')); return }
+      pending = pending.subarray(split + 4); upgraded = true
+      const mask = Buffer.from([1, 2, 3, 4]), bytes = Buffer.from('quic-frame')
+      const encoded = Buffer.from(bytes.map((byte, index) => byte ^ mask[index % 4]))
+      socket.write(Buffer.concat([Buffer.from([0x81, 0x80 | bytes.length]), mask, encoded]))
+    }
+    if (upgraded && pending.length >= 2) {
+      const length = pending[1] & 127
+      if (pending.length < length + 2) return
+      if (pending[0] !== 0x81 || (pending[1] & 128) !== 0 || pending.subarray(2, 2 + length).toString() !== 'quic-frame') { fail(new Error('WebSocket frame mismatch')); return }
+      finished = true; close(); resolve()
     }
   })
-  child.stderr.setEncoding('utf8')
-  child.stderr.on('data', (chunk) => stderr.push(chunk))
-  return { child, stdout, stderr }
-}
-
-const kill = async (child) => {
-  if (!child || child.exitCode !== null) return
-  if (process.platform === 'win32') {
-    await new Promise((resolve) => execFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], () => resolve()))
-  } else {
-    child.kill()
-  }
-  await Promise.race([
-    new Promise((resolve) => child.once('exit', resolve)),
-    sleep(2_000),
-  ])
-}
-
-const root = await mkdtemp(join(tmpdir(), 'dsh-mobile-iroh-smoke-'))
-const target = createServer((request, response) => response.end(`smoke:${request.url}`))
-let host
-let phone
+})
 
 try {
-  await new Promise((resolve, reject) => {
-    target.once('error', reject)
-    target.listen(0, '127.0.0.1', resolve)
+  target = createServer((incoming, response) => {
+    const chunks = []
+    incoming.on('data', (chunk) => chunks.push(chunk))
+    incoming.on('end', () => {
+      if (incoming.headers.cookie !== 'device=smoke' || incoming.headers.origin !== 'https://foreign.invalid' || incoming.headers['x-smoke'] !== 'unchanged') {
+        response.writeHead(400); response.end('headers were not preserved'); return
+      }
+      if (incoming.url === '/echo') {
+        response.setHeader('Set-Cookie', ['one=1; HttpOnly', 'two=2; SameSite=Strict'])
+        response.end(Buffer.concat(chunks))
+      } else response.end(payload)
+    })
   })
-  const targetPort = target.address().port
-  const proxyPort = await freePort()
-  host = spawnSidecar([
-    'host',
-    '--data-dir', join(root, 'host'),
-    '--pair',
-    '--proxy-target', `127.0.0.1:${targetPort}`,
-  ])
-  const ready = await waitFor(host.stdout, (event) => event.type === 'ready')
-  const pairing = await waitFor(host.stdout, (event) => event.type === 'pairing')
-  phone = spawnSidecar([
-    'phone-sim',
-    '--data-dir', join(root, 'phone'),
-    '--peer', ready.endpoint_id,
-    '--code', pairing.code,
-    '--name', 'iroh-smoke',
-    '--delay', '20',
-    '--proxy-listen', `127.0.0.1:${proxyPort}`,
-  ])
-  await waitFor(phone.stderr, (chunk) => /\bpaired\b/.test(chunk), 25_000)
-  await waitFor(host.stdout, (event) => event.type === 'peer-connected', 10_000)
-  const response = await fetch(`http://127.0.0.1:${proxyPort}/smoke`)
-  const body = await response.text()
-  if (response.status !== 200 || body !== 'smoke:/smoke') {
-    throw new Error(`proxy response mismatch: HTTP ${response.status} ${body}`)
-  }
-  host.child.stdin.write(JSON.stringify({
-    type: 'approval',
-    id: 'iroh-smoke-approval',
-    tool_name: 'smoke',
-    reason: 'local iroh smoke',
-  }) + '\n')
-  await waitFor(phone.stderr, (chunk) => /replied: allowed-once/.test(chunk), 10_000)
-  await waitFor(host.stdout, (event) => event.type === 'decision' && event.id === 'iroh-smoke-approval', 10_000)
-  console.log(JSON.stringify({ status: 'passed', transport: 'iroh', pairing: true, proxy: true, approval: true }))
-} catch (error) {
-  const diagnostics = [
-    ...((host?.stderr ?? []).map((chunk) => chunk.trim()).filter(Boolean)),
-    ...((phone?.stderr ?? []).map((chunk) => chunk.trim()).filter(Boolean)),
-  ]
-  const message = `${error instanceof Error ? error.message : String(error)}\n${diagnostics.join('\n')}`
-  if (/No addressing information available|All address lookup services failed/i.test(message)) {
-    console.error(JSON.stringify({
-      status: 'blocked',
-      reason: 'iroh endpoint discovery or relay addressing was unavailable',
-      diagnostics,
-    }, null, 2))
-    process.exitCode = 2
-  } else {
-    console.error(message)
-    process.exitCode = 1
-  }
+  target.on('connection', (socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)) })
+  target.on('upgrade', (incoming, socket) => {
+    if (incoming.headers.cookie !== 'device=smoke' || incoming.headers.origin !== 'https://foreign.invalid') { socket.destroy(); return }
+    const accept = createHash('sha1').update(`${incoming.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    let buffer = Buffer.alloc(0)
+    socket.on('data', (chunk) => {
+      buffer = Buffer.concat([buffer, chunk])
+      if (buffer.length < 6) return
+      const length = buffer[1] & 127
+      if (length > 125 || !(buffer[1] & 128)) { socket.destroy(); return }
+      if (buffer.length < length + 6) return
+      const mask = buffer.subarray(2, 6), bytes = Buffer.from(buffer.subarray(6, 6 + length))
+      for (let index = 0; index < bytes.length; index += 1) bytes[index] ^= mask[index % 4]
+      socket.end(Buffer.concat([Buffer.from([0x81, bytes.length]), bytes]))
+    })
+  })
+  await new Promise((resolve, reject) => { target.once('error', reject); target.listen(0, '127.0.0.1', resolve) })
+  fixture = await startHostAndPhone({ executable, dataDir: root, proxyTarget: `http://127.0.0.1:${target.address().port}` })
+  const bytes = await http(fixture.localAddress, '/bytes')
+  assert.equal(bytes.status, 200); assert.deepEqual(bytes.body, payload)
+  const echoed = await http(fixture.localAddress, '/echo', payload)
+  assert.deepEqual(echoed.body, payload); assert.deepEqual(echoed.headers['set-cookie'], ['one=1; HttpOnly', 'two=2; SameSite=Strict'])
+  await websocket(fixture.localAddress)
+  const paired = await waitForSidecarEvent(fixture.host, (event) => event.type === 'pairing-done')
+  await fixture.phone.stop()
+  extraPhone = await startPhone({ executable, dataDir: join(root, 'phone'), endpointId: fixture.endpointId, peerAddresses: fixture.peerAddresses })
+  assert.deepEqual((await http(extraPhone.localAddress, '/bytes')).body, payload)
+  await assert.rejects(startPhone({ executable, dataDir: join(root, 'unknown-phone'), endpointId: fixture.endpointId, peerAddresses: fixture.peerAddresses }), /phone exited/)
+  fixture.host.send({ version: 1, type: 'device-forget', id: paired.peer })
+  await bounded(extraPhone.closed, 5000, 'revoked phone did not disconnect')
+  await assert.rejects(http(extraPhone.localAddress, '/bytes'))
+  await assert.rejects(startPhone({ executable, dataDir: join(root, 'phone'), endpointId: fixture.endpointId, peerAddresses: fixture.peerAddresses }), /phone exited/)
+  fixture.host.send({ version: 1, type: 'device-list' })
+  const devices = await waitForSidecarEvent(fixture.host, (event) => event.type === 'devices' && event.devices.length === 0)
+  assert.equal(devices.devices.length, 0)
+  console.log(JSON.stringify({ status: 'passed', implementation: 'first-party', topology: 'local-only explicit-address QUIC', pairing: true, persistedReconnect: true, httpBytes: true, cookiesAndOriginPreserved: true, websocketFrames: true, unknownPeerDenied: true, revocation: true, modelRequests: 0 }))
 } finally {
-  await kill(phone?.child)
-  await kill(host?.child)
-  await new Promise((resolve) => target.close(() => resolve()))
-  await rm(root, { recursive: true, force: true })
+  const errors = []
+  try { await extraPhone?.stop() } catch (error) { errors.push(error) }
+  try { await fixture?.close() } catch (error) { errors.push(error) }
+  for (const socket of sockets) socket.destroy()
+  if (target !== undefined) await new Promise((resolve) => target.close(() => resolve()))
+  await ownedRoot.cleanup()
+  if (errors.length > 0) throw new AggregateError(errors, 'first-party smoke cleanup failed')
 }

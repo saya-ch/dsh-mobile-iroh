@@ -3,7 +3,6 @@ package io.github.sayach.dshmobileiroh
 import java.io.IOException
 import java.io.OutputStream
 import java.net.URI
-import javax.net.ssl.HttpsURLConnection
 
 /** A foreground GET download that refuses cleartext and cross-origin redirects. */
 internal object SameOriginDownloader {
@@ -21,14 +20,18 @@ internal object SameOriginDownloader {
         caCertificate: ByteArray?,
         output: OutputStream,
         maxBytes: Long = MAX_DOWNLOAD_BYTES,
+        transport: TransportEndpoint = LocalTransport,
     ) {
+        if (IrohDeviceBinding.isIrohHost(origin.host) && transport === LocalTransport) {
+            throw IOException("Iroh download requires its active paired transport")
+        }
         var current = initialUrl
         repeat(MAX_REDIRECTS + 1) { redirectCount ->
             if (!GatewayUrlPolicy.isAllowedDownload(origin, current)) {
                 throw IOException("Download left the configured origin")
             }
-            val connection = URI(current).toURL().openConnection() as? HttpsURLConnection
-                ?: throw IOException("Download transport is not HTTPS")
+            val currentUri = URI(current)
+            val connection = transport.open(origin, currentUri.rawPath.ifEmpty { "/" } + (currentUri.rawQuery?.let { "?$it" } ?: ""))
             try {
                 if (caCertificate != null) connection.sslSocketFactory = PinnedTls.socketFactory(caCertificate)
                 connection.instanceFollowRedirects = false

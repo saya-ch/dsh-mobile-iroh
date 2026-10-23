@@ -96,10 +96,13 @@ internal class DeviceStatusPoller(
 }
 
 /** A legacy gateway's trusted renewal remains the fallback when native-probe is unavailable. */
-internal fun probeSavedDevice(device: PairedDeviceRecord): NativeProbe = try {
-    NativeAuthClient.probe(device.origin, device.deviceToken, device.caCertificate, device.instanceId)
-} catch (failure: NativeAuthFailure) {
-    if (failure.kind != NativeAuthFailureKind.INVALID_RESPONSE) throw failure
-    val session = NativeAuthClient.renew(device.origin, device.deviceToken, device.caCertificate, device.instanceId)
-    NativeProbe(device.origin, device.instanceId, session.deviceId, device.expiresAt)
+internal fun probeSavedDevice(device: PairedDeviceRecord): NativeProbe {
+    if (device.iroh != null) throw NativeAuthFailure(NativeAuthFailureKind.NETWORK)
+    return try {
+        NativeAuthClient.probe(device.origin, device.deviceToken, device.caCertificate, device.instanceId)
+    } catch (failure: NativeAuthFailure) {
+        if (failure.kind != NativeAuthFailureKind.INVALID_RESPONSE) throw failure
+        val session = NativeAuthClient.renew(device.origin, device.deviceToken, device.caCertificate, device.instanceId)
+        NativeProbe(device.origin, device.instanceId, session.deviceId, device.expiresAt)
+    }
 }
