@@ -1,7 +1,43 @@
 {
   "name": "dsh-mobile-iroh",
   "version": "0.1.0-alpha.1",
-  "private": true,
+  "description": "Independent iroh transport and Android companion for DeepSeek Harness",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/saya-ch/dsh-mobile-iroh.git" },
+  "homepage": "https://github.com/saya-ch/dsh-mobile-iroh#readme",
+  "bugs": { "url": "https://github.com/saya-ch/dsh-mobile-iroh/issues" },
+  "main": "./plugin/index.mjs",
+  "exports": { ".": "./plugin/index.mjs", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "publishConfig": { "access": "public", "tag": "alpha", "registry": "https://registry.npmjs.org/" },
+  "files": [
+    "plugin/index.mjs", "plugin/runtime.mjs", "plugin/security.mjs", "lib/client.js", "cordis.patch.yml",
+    "src/native-artifact.mjs", "src/sidecar-controller.mjs", "src/iroh-remote-controller.mjs",
+    "integration/extension-host.mjs", "integration/host-session.mjs", "integration/mobile-gateway-factory.mjs",
+    "integration/native-command-owner.mjs", "integration/native-config-store.mjs", "integration/native-preference-store.mjs",
+    "integration/native-tls-manager.mjs", "integration/operator-owner.mjs", "integration/origin-contract.mjs", "integration/pairing-descriptor.mjs",
+    "operator/cli.mjs", "operator/server.mjs", "operator/README.md", "operator/web/index.html", "operator/web/app.mjs", "operator/web/style.css",
+    "native/manifest.json", "native/dsh-mobile-iroh-host-win32-x64.exe", "native/dsh-mobile-iroh-host-linux-x64",
+    "native/THIRD_PARTY_NOTICES.txt", "native/dependencies.json",
+    "LICENSE", "LICENSE.dsh-mobile", "LICENSE.dsh-tether", "NOTICE", "README.md", "README.en.md"
+  ],
+  "dependencies": { "dsh-mobile": "0.6.16", "qrcode": "^1.5.4" },
+  "devDependencies": { "tar": "7.5.22", "tsdown": "^0.23.0" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-host-webserver": "*",
+    "@deepseek-ai/dsh-client-connection": "*",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-host-webserver": { "optional": true },
+    "@deepseek-ai/dsh-client-connection": { "optional": true },
+    "react": { "optional": true }
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "inject": ["@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-ui-settings"], "immediately": true }
+  },
   "type": "module",
   "engines": { "node": "^22.19.0 || >=24.0.0" },
   "scripts": {
@@ -19,6 +55,10 @@
     "build:android-transport": "node scripts/build-android-transport.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "check:licenses": "node scripts/dependency-inventory.mjs",
-    "test": "node --test src/*.test.mjs integration/*.test.mjs operator/*.test.mjs scripts/*.test.mjs test-support/*.test.mjs experiments/identity/*.test.mjs"
+    "build:client": "tsdown --config plugin/tsdown.config.mjs && node plugin/check-client-bundle.mjs",
+    "release:licenses": "node scripts/release-notices.mjs",
+    "release:pack": "node scripts/pack-release.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "test": "node --test src/*.test.mjs integration/*.test.mjs operator/*.test.mjs plugin/*.test.mjs scripts/*.test.mjs test-support/*.test.mjs experiments/identity/*.test.mjs"
   }
 }

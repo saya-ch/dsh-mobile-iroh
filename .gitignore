@@ -1,4 +1,6 @@
 artifacts/
+native/
+lib/
 node_modules/
 *.log
 .DS_Store
@@ -7,3 +9,5 @@ apps/mobile/android/local.properties
 apps/mobile/android/.gradle/
 apps/mobile/android/.kotlin/
 apps/mobile/android/**/build/
+apps/mobile/android/app/src/main/assets/THIRD_PARTY_NOTICES.txt
+apps/mobile/android/app/src/main/assets/third-party-dependencies.json

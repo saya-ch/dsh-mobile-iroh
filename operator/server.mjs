@@ -25,6 +25,7 @@ function safeStatus(raw) {
   const result = { enabled: raw.enabled, state: raw.state }
   if (ID.test(raw.endpointId ?? '')) result.endpointId = raw.endpointId
   if (typeof raw.configured === 'boolean') result.configured = raw.configured
+  if (raw.managedHost === true) result.managedHost = true
   if (Number.isInteger(raw.localPort) && raw.localPort >= 1024 && raw.localPort <= 65535) result.localPort = raw.localPort
   if (typeof raw.localOnly === 'boolean') result.localOnly = raw.localOnly
   if (/^[a-z][a-z0-9_]{0,79}$/u.test(raw.errorCode ?? '')) result.errorCode = raw.errorCode
@@ -48,10 +49,11 @@ function safePeers(raw) {
   })
 }
 
-function configuration(body) {
-  if (!keys(body, ['version', 'upstreamAuthenticatedUrl', 'localPort', 'localOnly']) || body.version !== 1
-    || !safeString(body.upstreamAuthenticatedUrl, 8192) || !Number.isInteger(body.localPort)
+function configuration(body, managedHost = false) {
+  if (!keys(body, managedHost ? ['version', 'localPort', 'localOnly'] : ['version', 'upstreamAuthenticatedUrl', 'localPort', 'localOnly']) || body.version !== 1
+    || !managedHost && !safeString(body.upstreamAuthenticatedUrl, 8192) || !Number.isInteger(body.localPort)
     || body.localPort < 1024 || body.localPort > 65535 || typeof body.localOnly !== 'boolean') throw fail(400, 'invalid_configuration')
+  if (managedHost) return body
   let url
   try { url = new URL(body.upstreamAuthenticatedUrl) } catch { throw fail(400, 'invalid_upstream_url') }
   if (!['http:', 'https:'].includes(url.protocol) || !['127.0.0.1', '[::1]'].includes(url.hostname)
@@ -97,7 +99,8 @@ export async function createOperatorServer({ owner, renderQr, now = () => Date.n
     || typeof now !== 'function' || ![sessionLifetimeMs, launchLifetimeMs, operationTimeoutMs].every((value) => Number.isSafeInteger(value) && value >= 100 && value <= 3_600_000)) throw fail(400, 'invalid_operator_options')
   const assets = new Map(await Promise.all([...ASSETS].map(async ([route, [file, type]]) => [route, { body: await readFile(new URL(`./web/${file}`, import.meta.url)), type }])))
   let launchToken = randomToken()
-  const launchExpires = now() + launchLifetimeMs
+  let launchExpires = now() + launchLifetimeMs
+  let launchGeneration = 0
   const cookieName = `dsh_operator_${randomBytes(12).toString('hex')}`
   let session
   let origin
@@ -203,13 +206,19 @@ export async function createOperatorServer({ owner, renderQr, now = () => Date.n
       const body = await readBody(request)
       if (request.url === '/api/v1/session') {
         if (keys(body, ['version', 'token']) && body.version === 1 && TOKEN.test(body.token) && launchToken && now() < launchExpires && same(body.token, launchToken)) {
+          const generation = launchGeneration
           launchToken = undefined
+          // The replacement console must not inherit its predecessor's pairing window.
+          const replacing = session !== undefined
+          session = undefined
+          if (replacing) { for (const abort of operations) abort.abort(); await clearPairing() }
+          if (closed || generation !== launchGeneration) throw fail(409, 'operator_login_replaced')
           session = { token: randomToken(), csrf: randomToken(), expiresAt: now() + sessionLifetimeMs }
         } else if (keys(body, ['version']) && body.version === 1) authenticated(request, false)
         else throw fail(401, 'operator_launch_token_rejected')
         send(response, 200, { version: 1, csrf: session.csrf, expiresAt: session.expiresAt }, { 'Set-Cookie': `${cookieName}=${session.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor((session.expiresAt - now()) / 1000)}` }); return
       }
-      if (request.url === '/api/v1/configure') configuration(body)
+      if (request.url === '/api/v1/configure') configuration(body, owner.managedHost === true)
       else if (request.url === '/api/v1/peers/forget') {
         if (!keys(body, ['version', 'id']) || body.version !== 1 || !ID.test(body.id ?? '')) throw fail(400, 'invalid_operator_peer')
       } else if (!keys(body, ['version']) || body.version !== 1) throw fail(400, 'invalid_operator_request')
@@ -291,6 +300,12 @@ export async function createOperatorServer({ owner, renderQr, now = () => Date.n
   const launchUrl = `${origin}/#${launchToken}`
   return Object.freeze({
     origin, launchUrl,
+    /** Issue a new one-time login after an explicit trusted local open action. */
+    issueLaunchUrl() {
+      if (closed) throw fail(409, 'operator_closed')
+      launchToken = randomToken(); launchExpires = now() + launchLifetimeMs; launchGeneration++
+      return `${origin}/#${launchToken}`
+    },
     close() {
       if (closeTask) return closeTask
       closed = true; launchToken = undefined; session = undefined; pairing = undefined; pairingGeneration += 1; clearTimeout(pairingTimer)

@@ -1,102 +1,134 @@
-# DSH Mobile iroh
+<p align="center">
+  <img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/apps/mobile/android/app/src/main/res/drawable-nodpi/ic_launcher_whale.png" alt="DSH Mobile iroh" width="88" height="88">
+</p>
 
-通过 iroh 连接电脑上的 DeepSeek Harness，沿用 DSH Mobile 的配对、设备列表和 WebView 体验。
+<h1 align="center">DSH Mobile iroh</h1>
 
-[English](README.en.md) · [开发与测试](CONTRIBUTING.md) · [验证记录](VERIFICATION.md) · [安全说明](SECURITY.md) · [并入方案](docs/INTEGRATION_SEAM.md)
+<p align="center">让手机通过加密直连或中继，继续使用电脑上的 DeepSeek Harness。</p>
 
-> **独立实验项目，尚未发布。** 不替换现有 DSH Mobile，不修改 DSH 核心，不自动迁移现有 App 数据。代码实现、本地传输验证、Android 构建、真机和公网网络验收是不同阶段。
+<p align="center">
+  <a href="https://www.npmjs.com/package/dsh-mobile-iroh"><img src="https://img.shields.io/npm/v/dsh-mobile-iroh/alpha?label=npm%20alpha&color=CB3837" alt="npm 测试版本"></a>
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/actions/workflows/ci.yml"><img src="https://github.com/saya-ch/dsh-mobile-iroh/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases"><img src="https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white" alt="Android 10+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F172A" alt="MIT"></a>
+</p>
 
-## 这是什么
+<p align="center">
+  <a href="#能做什么">能做什么</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#配对与连接">配对与连接</a> ·
+  <a href="#设备管理">设备管理</a> ·
+  <a href="#与-dsh-mobile-的关系">与 DSH Mobile 的关系</a> ·
+  <a href="#安全与连接体验">安全</a> ·
+  <a href="#兼容性">兼容性</a> ·
+  <a href="CHANGELOG.md">更新记录</a> ·
+  <a href="README.en.md">English</a>
+</p>
 
-iroh 提供端到端加密的 QUIC 连接，尝试直连，并可使用 relay。这里保留 DSH Mobile 的 HTTPS 网关：手机的 TLS 字节经 iroh 原样送到电脑，身份认证、Session Cookie、CSRF 和 WebSocket 路径控制仍由网关负责。它不是另一套 DSH 会话或 Agent 实现。
+> DSH Mobile iroh 是 [DSH Mobile](https://github.com/saya-ch/dsh-mobile) 的独立实验项目，不是 DeepSeek 官方产品。
+>
+> **当前候选：0.1.0-alpha.1。** npm 测试包与正式签名 APK 正在进行发布验收；下载入口在产物核验后开放。
+>
+> 插件与 App 独立编号、独立发布。独立 App 不覆盖原 DSH Mobile，也不会自动迁移原 App 的配对数据。
 
-```text
-Android / WebView
-    │ HTTPS / WSS，证书绑定电脑身份
-手机本机传输桥
-    │ iroh QUIC：配对端点、原始字节
-电脑 sidecar
-    │ 仅指定回环目标
-DSH Mobile HTTPS Gateway → DSH Web
-```
+它复用 DSH Mobile 的移动页面和配对体验，将手机到电脑之间的连接交给 iroh：尝试建立直接连接，无法直连时使用可用的中继。你不必先准备公网域名、端口映射或另一套 HTTPS 隧道；电脑仍需运行 DSH，双方网络也必须能访问所需的发现与中继服务。
 
-本机网页地址由完整 EndpointId 派生，例如 `https://<前32位>.<后32位>.iroh.localhost:25443`。完整身份用于隔离电脑的 Cookie 和网页存储，不用短哈希端口猜测设备身份。端口被占用时明确失败，不随机换 Origin。
+会话、工作区和工具仍由电脑上的 DSH 提供。项目不修改 DSH Core，也不会在手机上另起一套智能体。
 
-## 已有实现
+## 能做什么
 
-| 部分 | 当前内容 |
-| --- | --- |
-| 电脑传输 | 第一方 Rust sidecar；一次性配对、持久身份、设备列表、撤销、同设备重连和受控原始 TCP/TLS 转发；原生私有状态保存启用偏好，显式恢复保留关闭选择 |
-| 协议与资源 | 版本与字段校验、长度／连接／流配额、截止时间、父进程与控制流退出后的回收 |
-| 主机私有状态 | Unix 私有权限；Windows 创建时私有 DACL、旧状态核验、reparse 拒绝及不可删除的活动 profile 锁 |
-| 网关接线 | 使用 DSH Mobile 公开导出的网关，不注入 DSH launch Cookie，不改写上游前端包；可显式接入独立扩展服务 |
-| 证书 | 原生私有状态保存 CA，为完整 EndpointId 签发证书；叶证书可自动续期，通过公开接口刷新，不重启网关 |
-| 电脑管理 | 本机浏览器管理页：配置、启动／停止／重连、二维码、传输设备及证书状态；单次登录入口、会话与 CSRF 校验 |
-| Android | 独立包名、JNI、可取消连接、配对／命名／保存／恢复、设备列表、原始 TLS 与严格 CONNECT 桥；真机验收另列 |
-| 本地验收 | 真实 QUIC、HTTP、WSS、TLS 正反例、Java HTTPS、Chromium Origin 与设备撤销 |
+- **远程使用当前电脑上的 DSH**：连接已有的工作区、会话和插件页面，不复制一套会话数据。
+- **减少通道配置**：通过 iroh 发现电脑并建立加密连接，无需先配置 cpolar、cloudflared 或自建反向代理。
+- **熟悉的移动体验**：保留触屏页面、设备列表、启动偏好、网页设置和原生返回操作。
+- **扫码配对**：App 核对电脑身份和私有证书，再保存设备凭据。
+- **管理多台电脑**：自定义名称、连接最近使用的电脑、重新配对或删除本地记录。
+- **可取消的连接恢复**：连接与重连都有取消入口和总等待时间，恢复时尽量保留当前页面与未发送草稿。
+- **电脑端管理**：从 DSH 通用设置打开管理页，启停连接、生成二维码、查看传输设备并撤销授权。
 
-具体执行记录和未覆盖范围见 [VERIFICATION](VERIFICATION.md)。本地直连通过不代表公网 NAT、公共 relay、手机睡眠切网或正式签名已经验收。
+## 快速开始
 
-已在 Android 16 真机的移动网络上完成首次配对、真实 DSH 页面加载、保存设备后的重连、取消与在线撤销检查；仍在完善失败恢复，尚未发布正式 App，也未并入 DSH Mobile。
+### 1. 准备电脑与手机
 
-## 开发运行
+- 电脑使用官方 DSH Desktop 或 DSH Web，并安装、启用 **dsh-mobile 0.6.16**。
+- 本测试版电脑端支持 **Windows x64、Linux x64**，npm 包内附原生传输程序，不需要用户安装 Rust。
+- 手机使用 **Android 10 及以上**，当前 APK 包含 arm64-v8a、x86_64；32 位设备暂不支持。
 
-需要 Node.js、Rust，以及构建 Android 时的 JDK 17、Android SDK 36 和明确选择的 NDK。不要将身份私钥放在共享目录；Windows 默认状态目录为用户主目录下的 `.dsh-mobile-iroh`，开发仓库仍可放在 `C:/develop`。
+主 Mobile 插件负责提供移动前端，不要求你为 iroh 另开它的局域网或远程通道。iroh 使用独立的启停状态、证书和配对记录。
 
-```powershell
-npm test
-npm run check:docs
-cargo fmt --all -- --check
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo build --locked -p dsh-mobile-iroh-host -p dsh-mobile-iroh-transport-sim
-npm run smoke:iroh
-```
+### 2. 安装电脑端插件
 
-`smoke:iroh` 使用本仓编译的 sidecar 和显式回环地址，不依赖公共发现服务。它检查首次配对、持久重连、HTTP 字节、多个 Cookie、WebSocket、未知设备和撤销，并清理自己的资料目录。
+**官方 DSH Desktop**：在插件管理中安装并启用 `dsh-mobile-iroh@alpha`，再进入 **设置 → 通用设置 → DSH Mobile iroh → 打开管理**。
 
-完整 HTTPS 网关验收还需要一个隔离安装的公开 DSH Mobile 模块、Playwright Chromium 和 JDK。设置 `DSH_MOBILE_MODULE` 为该模块的绝对 `lib/index.mjs` 路径，再运行：
-
-```powershell
-npm run smoke:gateway
-```
-
-这会执行实际 Android 传输 crate 的主机测试驱动，不是 Android 真机。安装与参数见 [CONTRIBUTING](CONTRIBUTING.md)。
-
-完整前端验收使用 `npm run smoke:dsh-frontend`，还需将 `DSH_IROH_DSH_BIN` 设为隔离安装的 DSH CLI 入口绝对路径。它加载真实 DSH 页面，检查模型选择、模块规则、扩展认证、日志 ZIP 和传输重启后的会话／草稿保持，不发送模型请求。[运行范围](CONTRIBUTING.md#full-dsh-frontend)
-
-## 电脑管理页
-
-编译 sidecar 后，使用显式指定的公开 Mobile 模块运行：
+**DSH Web**：使用当前 DSH 的 CLI 安装到 web profile：
 
 ```powershell
-npm run operator -- --mobile-module C:/path/to/runtime/node_modules/dsh-mobile/lib/index.mjs --executable C:/path/to/dsh-mobile-iroh-host.exe
+dsh plugin --profile web add dsh-mobile@0.6.16 dsh-mobile-iroh@alpha
 ```
 
-管理页只监听本机 `127.0.0.1`，不会成为公网管理入口。填入当前 DSH 的回环授权地址后，点击启动并生成二维码；完整授权地址只保存在当前进程内存中，重新启动管理进程后需重新提供。自定义端口、回环 Origin 和仅本机测试选项单独持久保存。不要将带登录片段的管理页地址或配对二维码贴进 issue。
+按安装提示正常重启 DSH，再从通用设置打开管理。Desktop 的 profile 由官方应用管理，不要套用 `--profile web` 的命令修改 Desktop。
 
-默认资料目录是用户主目录下的 `.dsh-mobile-iroh`，可用 `--data-dir` 指定独立私有目录。`--no-open` 仅在交互终端输出一次性登录地址；Ctrl-C 关闭本管理进程及其拥有的连接，不删除配对。关闭浏览器标签页不会停止手机连接。[操作与安全细节](operator/README.md)
+管理页会连接当前 DSH，无需复制 DSH 登录 Token。点击 **启动** 后生成配对二维码。管理页只监听电脑的回环地址，不作为公网管理入口。
 
-扩展需通过明确的 provider 或 `--extensions-dir` 指定的本地目录接入；不会自动复制普通 DSH profile 中已安装的扩展。依赖 DSH 进程内服务的扩展仍需显式适配，不承诺所有第三方插件自动兼容。
+### 3. 安装独立 Android App
 
-## Android App
+正式签名 APK 会放在本仓库的 [Releases](https://github.com/saya-ch/dsh-mobile-iroh/releases)。请安装 **DSH Mobile iroh**，不要拿它覆盖原 DSH Mobile。
 
-独立包名是 `io.github.sayach.dshmobileiroh`，不会覆盖 `io.github.sayach.dshmobile`。使用 `-PirohNative=true` 构建包含原生传输的版本；未启用时保留原 HTTPS 基线，不假装含有 iroh。当前原生包仅含 arm64-v8a、x86_64，不是主 App 的全设备替换包。
+本地 Debug 包与正式包签名不同，不能直接相互覆盖。以后正式版升级应使用相同发布签名；不要通过清除原 DSH Mobile 数据来处理签名冲突。
 
-[Android 构建、ABI 与验收说明](apps/mobile/README.md)
+## 配对与连接
 
-嵌入式 operator API 可在新实例中调用 `restore()` 按上次选择恢复；它不同于显式开启的 `start()`。停止会保存关闭选择，卸载只关闭资源，不删除身份或配对；管理页不会在缺少当前授权地址时自动启动。[接线说明](CONTRIBUTING.md#host-startup-preferences)
+1. 在电脑上打开 iroh 管理页，启动连接并生成二维码。
+2. 在独立 App 中选择 **iroh 连接（实验）→ 扫码配对**；也可以粘贴完整配对信息。
+3. 配对成功后给电脑命名，进入 DSH。
+4. 以后从已配对设备中打开这台电脑；身份、证书和授权仍有效时，不需要重复扫码。
 
-## 边界
+二维码包含一次性凭据，请只在可信电脑和手机之间使用，不要把有效二维码、完整配对文本或管理页登录链接贴到 issue。
 
-- 没有向 npm、APK 或 GitHub Release 发布本项目；不要将本地 Debug 包当正式版本。
-- 不修改 DSH Core、DSH Mobile 主仓或用户正在使用的 profile。
-- 不通过正则改写 DSH 前端包，不把所有第三方插件兼容性交给传输层。
-- 公网发现、relay 和真实移动网络仍需独立验收；网络阻断必须报告，不能用回环通过替代。
-- 主仓当前 provider 是封闭集合。未来并入需要审查明确的 provider 与 Android 接线，不是现在就修改主仓。
+iroh 使用持久电脑身份发现对端，地址变化不必等同于重新配对。但网络阻断、电脑休眠或公共服务暂时不可达仍会让连接失败；可取消并稍后重试，不会因此把设备当作已删除。
 
-## 致谢与许可
+## 设备管理
 
-Rust 基线参考 [zexadev/dsh-tether](https://github.com/zexadev/dsh-tether)，Android 体验和代码基线来自 [saya-ch/dsh-mobile](https://github.com/saya-ch/dsh-mobile)。它们的贡献与许可保留在 [NOTICE](NOTICE)、[原始 MIT 许可](LICENSE.dsh-tether) 和 [DSH Mobile Apache-2.0 许可](LICENSE.dsh-mobile) 中；其余本仓原创代码按 [MIT](LICENSE) 提供，不代表上游背书。
+**已配对设备**页面集中显示保存的电脑。点击条目连接，长按或点击更多按钮可编辑名称、重新配对或删除本地记录；名称只影响本 App。
 
-早期非 iroh 的签名信封实验移入 [experiments/identity](experiments/identity/README.md)。外部参考 sidecar 的检查是 `npm run smoke:reference`，不算本仓第一方实现的验收。
+设备列表的设置提供两种启动行为：
+
+- **直接进入 DSH**：尝试连接最近使用的电脑；即使保存了多台电脑，也按这一选择执行。
+- **显示设备列表**：每次打开 App 先选择电脑。
+
+进入 DSH 后，可在网页的 **设置 → 通用设置 → 切换电脑** 返回列表。删除本地记录不会关闭电脑端 DSH，也不影响其他手机。
+
+电脑端撤销在线设备后，App 会保留条目并显示 **电脑端已移除**，可以重新配对或删除本地记录。离线时仅撤销 iroh 传输授权，下次连接可能只能得到通用失败；它与 Mobile Gateway 的设备 Token 撤销是不同层级，不会把普通断网误报为撤销。
+
+## 与 DSH Mobile 的关系
+
+| | DSH Mobile | DSH Mobile iroh |
+| --- | --- | --- |
+| 手机到电脑的连接 | 局域网或 HTTPS 远程入口 | iroh 直连／中继，内部保留 HTTPS 网关校验 |
+| 手机客户端 | Android App 或手机浏览器 | 带原生 iroh 传输的独立 Android App |
+| 移动前端 | 主 Mobile 插件提供 | 复用已启用的主 Mobile 前端 |
+| 配对和状态 | 主插件与原 App 管理 | 独立保存，不自动迁移 |
+| 当前定位 | 持续维护的主项目 | 独立测试路线，未来是否并入另行评估 |
+
+普通 DSH 页面和已加载插件仍来自当前电脑。主 Mobile 的自定义扩展目录、已运行的扩展服务及第三方 WebSocket 放行配置不会自动同步到独立网关；不承诺所有社区插件无需配置即可使用。[独立管理与扩展说明](operator/README.md)
+
+## 安全与连接体验
+
+iroh 传输与网关授权分层工作。端到端加密连接之外，App 仍校验完整电脑身份对应的 HTTPS 主机名和固定 CA，网页请求仍受设备会话、Origin、CSRF 和 WebSocket 路径规则约束。
+
+App 的 Mobile 凭据使用 Android Keystore 加密。iroh 长期身份密钥保存在禁用备份的 App 私有目录中，目前不是硬件 Keystore 包装。配对设备可以操作电脑上的 DSH，应视为完全受信任；手机遗失时应撤销相应授权。[安全说明](SECURITY.md)
+
+成功直连通常少一层中继，但并非所有 NAT、防火墙或运营商都允许；公共发现与中继也可能受网络策略影响。管理页显示本地服务已启动，不等于已经证明手机公网可达。
+
+## 兼容性
+
+当前验收以 **官方 DSH Desktop / DSH 0.2.1-rc.2**、**dsh-mobile 0.6.16** 为基础。初版使用数值回环 HTTP 作为电脑内的 DSH 上游，手机到电脑之间仍是加密传输；不支持把任意公网 URL 当作转发目标。
+
+已经完成 Android 16 移动网络下的部分真实配对、页面加载、重连和撤销检查，不等于覆盖所有网络、手机或第三方插件。具体结果与待补项见 [VERIFICATION](VERIFICATION.md)。
+
+## 参与开发
+
+欢迎提供清楚的复现步骤、版本和网络条件，或提交小而明确的改进。反馈时请隐藏二维码、Token、Cookie、私钥和私人会话内容。
+
+[开发与验证](CONTRIBUTING.md) · [Android 构建](apps/mobile/README.zh-CN.md) · [架构](docs/ARCHITECTURE.md) · [实施进度](docs/IMPLEMENTATION_PLAN.md) · [更新记录](CHANGELOG.md)
+
+Rust 基线参考 [zexadev/dsh-tether](https://github.com/zexadev/dsh-tether)，移动体验与代码基线来自 [DSH Mobile](https://github.com/saya-ch/dsh-mobile)，传输依赖 [iroh](https://github.com/n0-computer/iroh)。感谢这些开源项目；贡献与许可保留在 [NOTICE](NOTICE)、[原始 MIT 许可](LICENSE.dsh-tether) 和 [DSH Mobile Apache-2.0 许可](LICENSE.dsh-mobile) 中。本仓原创代码按 [MIT](LICENSE) 提供，不代表上游背书。

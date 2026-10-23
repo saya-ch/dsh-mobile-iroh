@@ -136,6 +136,15 @@ export class IrohOperatorOwner {
 
   /** Explicitly enable after authorization has been supplied for this process. */
   start(options) { return this.#activate('start',options) }
+
+  /** Bind the current DSH process without persisting its authorization or enabling transport. */
+  async authorizeCurrentHost(upstreamAuthenticatedUrl,{ signal } = {}) {
+    this.#available(signal)
+    await this.initialize({ signal })
+    return this.configure({ version:1,upstreamAuthenticatedUrl,
+      localPort:this.#config?.localPort ?? DEFAULT_IROH_LOCAL_PORT,
+      localOnly:this.#config?.localOnly ?? false },{ signal })
+  }
   /** Re-read saved startup intent using the current process's authorized entry. */
   restore(options) { return this.#activate('restore',options) }
   /** Explicitly replace the active transport while preserving identity and peer records. */

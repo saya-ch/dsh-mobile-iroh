@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -13,11 +14,17 @@ jobs:
   transport:
     name: Local transport (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-22.04
+            target: linux-x64
+            executable: dsh-mobile-iroh-host
+          - os: windows-latest
+            target: win32-x64
+            executable: dsh-mobile-iroh-host.exe
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -26,6 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.1
         with:
           components: rustfmt, clippy
+      - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run check:docs
       - run: cargo fmt --all -- --check
@@ -56,6 +64,74 @@ jobs:
       - run: npm run smoke:dsh-frontend
       - run: npm run smoke:operator-ui
       - run: npm run smoke:operator-runtime
+      - run: node plugin/smoke-managed-ui.mjs
+      - run: npm run build:client
+      - run: node plugin/smoke-client-registry.mjs
+      - name: Build optimized native distribution
+        run: cargo build --locked --release -p dsh-mobile-iroh-host
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-host-${{ matrix.target }}
+          path: target/release/${{ matrix.executable }}
+          if-no-files-found: error
+
+  package:
+    name: Inspect npm tarball
+    needs: transport
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - run: npm ci --ignore-scripts
+      - run: cargo fetch --locked
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-host-*
+          path: native-inputs
+      - run: npm run release:licenses
+      - name: Assemble both native platforms and inspect exact package contents
+        run: >-
+          npm run release:pack --
+          --windows "$GITHUB_WORKSPACE/native-inputs/native-host-win32-x64/dsh-mobile-iroh-host.exe"
+          --linux "$GITHUB_WORKSPACE/native-inputs/native-host-linux-x64/dsh-mobile-iroh-host"
+          --output "$RUNNER_TEMP/npm-candidate"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-candidate
+          path: |
+            ${{ runner.temp }}/npm-candidate/*
+          if-no-files-found: error
+
+  installed:
+    name: Installed npm runtime (${{ matrix.os }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-candidate
+          path: candidate
+      - name: Install tarball without lifecycle scripts and exercise its runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$(find "$GITHUB_WORKSPACE/candidate" -name 'dsh-mobile-iroh-*.tgz' -type f -print -quit)"
+          test -n "$tarball"
+          npm install --prefix "$RUNNER_TEMP/installed-iroh" --ignore-scripts --no-audit --no-fund "$tarball" @deepseek-ai/dsh@0.2.1-rc.2
+          node scripts/smoke-installed-package.mjs --package-root "$RUNNER_TEMP/installed-iroh/node_modules/dsh-mobile-iroh"
 
   android:
     name: Native Android build
@@ -76,6 +152,11 @@ jobs:
       - uses: android-actions/setup-android@v4
       - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;25.2.9519653"
       - uses: gradle/actions/setup-gradle@v6
+      - name: Include actual Rust and Android runtime license notices
+        run: |
+          cargo fetch --locked
+          npm run release:licenses
+          node scripts/android-release-notices.mjs --ndk "$ANDROID_HOME/ndk/25.2.9519653"
       - name: Build actual JNI libraries, test and shrink the independent app
         working-directory: apps/mobile/android
         run: >-

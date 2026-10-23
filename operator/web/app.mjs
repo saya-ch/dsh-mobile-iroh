@@ -10,6 +10,9 @@ const dictionaries = {
   },
 }
 const $ = (id) => document.getElementById(id)
+Object.assign(dictionaries.zh,{ managedHelp:'已连接当前 DSH，无需复制授权链接。默认设置可直接启动；如需更改端口，请先停止传输。',managedSaved:'连接设置已保存，仍使用当前 DSH。',managedOff:'当前 DSH 已自动授权，点击启动即可连接手机。停止不会删除身份或配对。' })
+Object.assign(dictionaries.en,{ managedHelp:'Connected to the current DSH; no authorized URL is needed. Start with the defaults, or stop transport before changing its port.',managedSaved:'Connection settings saved for the current DSH.',managedOff:'The current DSH is authorized. Start to connect your phone. Stopping preserves identity and pairings.' })
+Object.assign(dictionaries.it,{ managedHelp:'Collegato al DSH attuale; non serve copiare un URL autorizzato. Avvia con i valori predefiniti o arresta il trasporto prima di cambiare porta.',managedSaved:'Impostazioni salvate per il DSH attuale.',managedOff:'Il DSH attuale è autorizzato. Avvia per collegare il telefono. L’arresto conserva identità e associazioni.' })
 Object.assign(dictionaries.zh,{ configRunning:'更改入口或端口前请先停止传输，以免中断已有手机连接。' })
 Object.assign(dictionaries.en,{ configRunning:'Stop transport before changing the entry or port, so existing phone connections are not interrupted unexpectedly.' })
 Object.assign(dictionaries.it,{ configRunning:'Arresta il trasporto prima di cambiare accesso o porta, per non interrompere inaspettatamente i telefoni connessi.' })
@@ -65,6 +68,10 @@ function render() {
   if (!status) return
   $('statusTitle').textContent = t(status.state)
   $('statusDetail').textContent = t(status.controlErrorCode ? 'controlErrorHelp' : status.state === 'ready' ? 'readyHelp' : status.state === 'error' ? 'errorHelp' : 'offHelp')
+  const managed = status.managedHost === true
+  $('upstreamFields').hidden = managed; $('upstream').required = !managed; $('upstream').disabled = managed
+  $('configHelp').textContent = t(managed ? 'managedHelp' : 'configHelp')
+  if (managed && status.state === 'off') $('statusDetail').textContent = t('managedOff')
   $('identity').hidden = !status.endpointId
   $('endpoint').textContent = status.endpointId ?? '—'; $('origin').textContent = status.origin ?? '—'
   const ready = status.state === 'ready'
@@ -126,6 +133,7 @@ $('configuration').addEventListener('submit', (event) => {
   let validUrl = false
   const upstreamAuthenticatedUrl = $('upstream').value.trim()
   try { const url = new URL(upstreamAuthenticatedUrl); validUrl = ['http:','https:'].includes(url.protocol) && ['127.0.0.1','[::1]'].includes(url.hostname) && !url.username && !url.password && !url.hash && !!url.searchParams.get('token') } catch { /* The inline validation message owns malformed URLs. */ }
+  if (status?.managedHost === true) validUrl = true
   const localPort = Number($('port').value)
   const validPort = Number.isInteger(localPort) && localPort >= 1024 && localPort <= 65535
   for (const [id, valid, key] of [['upstream',validUrl,'invalidUpstream'],['port',validPort,'invalidPort']]) {
@@ -133,7 +141,7 @@ $('configuration').addEventListener('submit', (event) => {
   }
   if (!validUrl || !validPort) { $(validUrl ? 'port' : 'upstream').focus(); return }
   clearQr()
-  void action(async () => { try { const result = await api('configure', { version:1, upstreamAuthenticatedUrl, localPort, localOnly:$('localOnly').checked }); status = result.status } finally { clearUpstream() } }, 'saved')
+  void action(async () => { try { const result = await api('configure', { version:1, ...(status?.managedHost === true ? {} : { upstreamAuthenticatedUrl }), localPort, localOnly:$('localOnly').checked }); status = result.status } finally { clearUpstream() } }, status?.managedHost === true ? 'managedSaved' : 'saved')
 })
 $('showUpstream').addEventListener('click', () => { const show = $('upstream').type === 'password'; $('upstream').type = show ? 'text' : 'password'; $('showUpstream').textContent = t(show ? 'hide' : 'show'); $('showUpstream').setAttribute('aria-pressed',String(show)) })
 for (const route of ['start','reconnect']) $(route).addEventListener('click', () => { clearQr(); void action(async () => { await api(route) }) })

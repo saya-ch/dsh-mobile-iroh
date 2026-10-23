@@ -63,6 +63,18 @@ test('invalid configuration cannot reach a durable store',async t => {
   assert.deepEqual(f.saved,[])
 })
 
+test('current Host authorization retains saved port and enable intent but never stores its token',async t => {
+  const f = fixture(t); f.setPersisted(config); f.setEnabled(true)
+  const state = await f.owner.authorizeCurrentHost('http://127.0.0.1:9666/?token=FRESH_PROCESS_SECRET')
+  assert.equal(state.enabled,true); assert.equal(state.configured,true)
+  assert.equal(state.localPort,config.localPort); assert.equal(state.localOnly,true)
+  assert.equal(f.sessions.length,0)
+  assert.deepEqual(f.saved,[{ ...config,upstreamOrigin:'http://127.0.0.1:9666' }])
+  assert.doesNotMatch(JSON.stringify(f.saved),/token|FRESH_PROCESS_SECRET/u)
+  await f.owner.restore()
+  assert.equal(f.sessions[0].options.upstreamAuthenticatedUrl,'http://127.0.0.1:9666/?token=FRESH_PROCESS_SECRET')
+})
+
 test('concurrent configuration saves are serialized and an acknowledged chosen port is not silently replaced',async t => {
   const gate = deferred(); let active = 0,maxActive = 0
   const saved = []

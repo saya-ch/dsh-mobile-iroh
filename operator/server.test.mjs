@@ -86,6 +86,34 @@ test('operator denies expired launches, alternate hosts, cross origins, missing 
   assert.equal((await g.call('session',{ version:1,token:new URL(g.server.launchUrl).hash.slice(1) })).response.status,401)
 })
 
+test('trusted reopen replaces stale tickets and sessions without carrying an old QR',async t => {
+  let now = Date.now(),cancelled = 0
+  const f = await fixture(t,{ now:() => now,owner:mockOwner({ cancelPairing:async () => { cancelled++ } }) })
+  await f.login(); await f.call('pairing')
+  now += 60_001
+  const stale = f.server.issueLaunchUrl(),fresh = f.server.issueLaunchUrl()
+  assert.equal((await f.call('session',{ version:1,token:new URL(stale).hash.slice(1) })).response.status,401)
+  const reopened = await f.call('session',{ version:1,token:new URL(fresh).hash.slice(1) })
+  assert.equal(reopened.response.status,200); assert.equal(cancelled,1)
+  assert.equal((await f.call('status')).response.status,401)
+  const cookie = reopened.response.headers.get('set-cookie').split(';')[0]
+  const result = await f.call('pairing/copy',{ version:1 },{ headers:{ Origin:f.server.origin,'Content-Type':'application/json',Cookie:cookie,'X-Operator-CSRF':reopened.body.csrf } })
+  assert.equal(result.response.status,410)
+  await f.server.close(); assert.throws(() => f.server.issueLaunchUrl())
+})
+
+test('Desktop-managed configuration accepts only port and mode, never a replacement upstream token',async t => {
+  const saved = []
+  const f = await fixture(t,{ owner:{ ...mockOwner({ configure:async value => saved.push(value) }),managedHost:true,status:() => ({ enabled:false,state:'off',managedHost:true }) } })
+  await f.login()
+  assert.equal((await f.call('status')).body.status.managedHost,true)
+  const input = { version:1,localPort:9443,localOnly:false }
+  assert.equal((await f.call('configure',input)).response.status,200)
+  assert.deepEqual(saved,[input])
+  assert.equal((await f.call('configure',{ ...input,upstreamAuthenticatedUrl:'http://127.0.0.1:9555/?token=OTHER' })).response.status,400)
+  assert.equal(saved.length,1)
+})
+
 test('strict version, fields, JSON, lengths and upstream socket checks precede owner calls', async (t) => {
   let calls = 0
   const f = await fixture(t,{ owner:mockOwner({ configure:async () => { calls++ } }) })

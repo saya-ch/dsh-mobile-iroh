@@ -1,0 +1,20 @@
+// Resolve the exact native-enabled release classpath without compiling or signing.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.register('irohReleaseLicenseDependencies') {
+        doLast {
+            if (app.findProperty('irohNative') != 'true') {
+                throw new GradleException('Android release notices require -PirohNative=true')
+            }
+            def configuration = app.configurations.getByName('releaseRuntimeClasspath')
+            def artifacts = configuration.resolvedConfiguration.resolvedArtifacts.collect { artifact ->
+                [group: artifact.moduleVersion.id.group, name: artifact.moduleVersion.id.name,
+                 version: artifact.moduleVersion.id.version, type: artifact.type,
+                 classifier: artifact.classifier, file: artifact.file.absolutePath]
+            }.sort { left, right -> "${left.group}:${left.name}:${left.version}:${left.file}" <=> "${right.group}:${right.name}:${right.version}:${right.file}" }
+            if (artifacts.isEmpty()) throw new GradleException('Android release runtime classpath is empty')
+            println('IROH_RELEASE_DEPENDENCIES=' + groovy.json.JsonOutput.toJson([schemaVersion: 1,
+                configuration: 'releaseRuntimeClasspath', nativeEnabled: true, artifacts: artifacts]))
+        }
+    }
+}

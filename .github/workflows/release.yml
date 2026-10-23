@@ -1,0 +1,170 @@
+name: Independent release
+
+on:
+  push:
+    tags: ['npm-v*', 'android-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: Exact-tag candidate gates
+    uses: ./.github/workflows/ci.yml
+
+  npm:
+    name: Publish experimental npm package
+    if: startsWith(github.ref_name, 'npm-v')
+    needs: candidate
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-candidate
+          path: candidate
+      - name: Check independent repository, tag and experimental channel
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { validateReleaseManifest } from './scripts/check-release.mjs';
+          const pkg = validateReleaseManifest(JSON.parse(readFileSync('package.json', 'utf8')));
+          if (process.env.GITHUB_REPOSITORY !== 'saya-ch/dsh-mobile-iroh' || process.env.GITHUB_REF_NAME !== `npm-v${pkg.version}`) throw new Error('Independent npm tag mismatch');
+          NODE
+      - name: Publish only the tested tarball with alpha tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.DSH_IROH_NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          tarball="$(find "$GITHUB_WORKSPACE/candidate" -name 'dsh-mobile-iroh-*.tgz' -type f -print -quit)"
+          test -n "$tarball"
+          (cd "$(dirname "$tarball")" && sha256sum --check "$(basename "$tarball").sha256")
+          npm publish "$tarball" --tag alpha --access public --provenance --ignore-scripts
+          verified=false
+          for attempt in {1..12}; do
+            if node scripts/verify-published-npm.mjs "$tarball" "${GITHUB_REF_NAME#npm-v}"; then verified=true; break; fi
+            sleep 10
+          done
+          test "$verified" = true
+      - name: Publish version-bound package assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          find candidate -type f \( -name '*.tgz' -o -name '*.sha256' -o -name 'THIRD_PARTY_NOTICES.txt' -o -name 'dependencies.json' \) -exec cp '{}' release-assets/ \;
+          gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --prerelease --latest=false --title "iroh npm ${GITHUB_REF_NAME#npm-v}" --notes "Experimental npm channel: alpha. Independent companion; does not replace DSH Mobile. Android packages are released separately."
+          gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/published-npm"
+          diff -rq release-assets "$RUNNER_TEMP/published-npm"
+
+  android:
+    name: Sign independent Android package
+    if: startsWith(github.ref_name, 'android-v')
+    needs: candidate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;25.2.9519653"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Collect native and Android runtime license notices before signing
+        run: |
+          cargo fetch --locked
+          npm run release:licenses
+          node scripts/android-release-notices.mjs --ndk "$ANDROID_HOME/ndk/25.2.9519653"
+      - name: Check product identity and tag
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const source = readFileSync('apps/mobile/android/app/build.gradle.kts', 'utf8');
+          const version = /^\s*versionName = "([^"]+)"$/m.exec(source)?.[1];
+          if (process.env.GITHUB_REPOSITORY !== 'saya-ch/dsh-mobile-iroh' || process.env.GITHUB_REF_NAME !== `android-v${version}`
+            || !source.includes('applicationId = "io.github.sayach.dshmobileiroh"')) throw new Error('Independent Android tag mismatch');
+          NODE
+      - name: Configure independent signing key
+        env:
+          DSH_IROH_ANDROID_KEYSTORE_BASE64: ${{ secrets.DSH_IROH_ANDROID_KEYSTORE_BASE64 }}
+          DSH_IROH_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.DSH_IROH_ANDROID_KEYSTORE_PASSWORD }}
+          DSH_IROH_ANDROID_KEY_ALIAS: ${{ secrets.DSH_IROH_ANDROID_KEY_ALIAS }}
+          DSH_IROH_ANDROID_KEY_PASSWORD: ${{ secrets.DSH_IROH_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in DSH_IROH_ANDROID_KEYSTORE_BASE64 DSH_IROH_ANDROID_KEYSTORE_PASSWORD DSH_IROH_ANDROID_KEY_ALIAS DSH_IROH_ANDROID_KEY_PASSWORD; do
+            test -n "${!name}" || { echo "Missing independent signing configuration: $name" >&2; exit 1; }
+          done
+          umask 077
+          printf '%s' "$DSH_IROH_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/iroh-release.jks"
+      - name: Build signed, native-enabled, optimized APK
+        working-directory: apps/mobile/android
+        env:
+          DSH_IROH_ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/iroh-release.jks
+          DSH_IROH_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.DSH_IROH_ANDROID_KEYSTORE_PASSWORD }}
+          DSH_IROH_ANDROID_KEY_ALIAS: ${{ secrets.DSH_IROH_ANDROID_KEY_ALIAS }}
+          DSH_IROH_ANDROID_KEY_PASSWORD: ${{ secrets.DSH_IROH_ANDROID_KEY_PASSWORD }}
+        run: >-
+          ./gradlew --no-daemon -PirohNative=true
+          -PirohNdk="$ANDROID_HOME/ndk/25.2.9519653"
+          testDebugUnitTest lintDebug assembleRelease
+          -x lintAnalyzeDebugUnitTest -x lintAnalyzeDebugAndroidTest
+      - name: Remove ephemeral signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/iroh-release.jks"
+      - name: Verify independent signer, native ABIs and alignment
+        run: |
+          set -euo pipefail
+          apk=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/apk-signature.txt"
+          node scripts/verify-android-release.mjs < "$RUNNER_TEMP/apk-signature.txt"
+          node scripts/build-android-transport.mjs --ndk "$ANDROID_HOME/ndk/25.2.9519653" --verify-apk "$apk" --build-tools "$ANDROID_HOME/build-tools/36.0.0"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
+          ! grep -q 'application-debuggable' "$RUNNER_TEMP/apk-badging.txt"
+          grep -q "name='io.github.sayach.dshmobileiroh'" "$RUNNER_TEMP/apk-badging.txt"
+          jar tf "$apk" | grep -Fx 'assets/THIRD_PARTY_NOTICES.txt'
+          jar tf "$apk" | grep -Fx 'assets/third-party-dependencies.json'
+      - name: Prepare signed release assets
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          version="${GITHUB_REF_NAME#android-v}"
+          cp apps/mobile/android/app/build/outputs/apk/release/app-release.apk "release-assets/dsh-mobile-iroh-android-v${version}.apk"
+          cp apps/mobile/signing.json release-assets/signing.json
+          (cd release-assets && sha256sum *.apk > android.sha256)
+          cp native/THIRD_PARTY_NOTICES.txt native/dependencies.json release-assets/
+          cp apps/mobile/android/app/src/main/assets/third-party-dependencies.json release-assets/android-dependencies.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: independent-signed-android
+          path: release-assets/*
+          if-no-files-found: error
+      - name: Publish signed experimental Android build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --prerelease --latest=false \
+            --title "iroh Android ${GITHUB_REF_NAME#android-v}" \
+            --notes "Officially signed Release build of the independent experimental iroh App. Product version remains alpha. Package: io.github.sayach.dshmobileiroh. Does not replace the original DSH Mobile App."
+          gh release download "$GITHUB_REF_NAME" --dir "$RUNNER_TEMP/published-android"
+          diff -rq release-assets "$RUNNER_TEMP/published-android"
+          (cd "$RUNNER_TEMP/published-android" && sha256sum --check android.sha256)
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$RUNNER_TEMP/published-android/dsh-mobile-iroh-android-v${GITHUB_REF_NAME#android-v}.apk" | node scripts/verify-android-release.mjs

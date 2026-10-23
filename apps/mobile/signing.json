@@ -1,0 +1,6 @@
+{
+  "applicationId": "io.github.sayach.dshmobileiroh",
+  "certificateSha256": "345cd064fdb6cd3c7f07784667a49bdfe8077fec777f6aa070b7d238842556f3",
+  "keyAlgorithm": "RSA-3072",
+  "productionMobileSignerUsed": false
+}

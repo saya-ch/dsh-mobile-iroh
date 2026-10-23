@@ -1,0 +1,7 @@
+# Independent companion. The existing dsh-mobile plugin owns the phone UI.
+- insert:
+    - id: dsh-mobile-iroh
+      name: dsh-mobile-iroh
+      inject: [webServer, connection, mobileAccess]
+      config:
+        dataDirectory: !!js dshHomePath('mobile-iroh')

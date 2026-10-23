@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "sources": {
+    "androidx": {
+      "basis": "Original AndroidX Apache-2.0 license text, used for resolved AndroidX artifacts that do not embed a license file. The commit pins the legal text, not the individual artifact build.",
+      "files": [{ "file": "LICENSE.txt", "url": "https://raw.githubusercontent.com/androidx/androidx/1909ffff7e4b2fc09362ce38fa8dec3aec3ec9b8/LICENSE.txt", "sha256": "809fa1ed21450f59827d1e9aec720bbc4b687434fa22283c6cb5dd82a47ab9c0" }]
+    },
+    "guava26": {
+      "basis": "ListenableFuture 1.0 declares guava-parent 26.0-android in its Maven POM; the upstream v26.0 source supplies COPYING.",
+      "files": [{ "file": "COPYING", "url": "https://raw.githubusercontent.com/google/guava/bbf9295088d668c06e573cea03f01375985c1814/COPYING", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30" }]
+    },
+    "zxing354": {
+      "basis": "Original LICENSE and NOTICE from the zxing-3.5.4 source tag.",
+      "files": [
+        { "file": "LICENSE", "url": "https://raw.githubusercontent.com/zxing/zxing/f651b0a0375676e47144f73397dddff8868b0e4c/LICENSE", "sha256": "3f62881f0566227a24b12e5a754cc79f39aaa94883038e95c94812e1f50af42f" },
+        { "file": "NOTICE", "url": "https://raw.githubusercontent.com/zxing/zxing/f651b0a0375676e47144f73397dddff8868b0e4c/NOTICE", "sha256": "4db4b60aace29ec6c5c4f13ca9cac1930d3c0c54bcc67dceead0c10771120e66" }
+      ]
+    },
+    "kotlin210": {
+      "basis": "Original legal texts from the Kotlin v2.1.0 source tag.",
+      "files": [
+        { "file": "license/LICENSE.txt", "url": "https://raw.githubusercontent.com/JetBrains/kotlin/5dd9cea66ee526f0251c9b1d2543229202622f6b/license/LICENSE.txt", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30" },
+        { "file": "license/NOTICE.txt", "url": "https://raw.githubusercontent.com/JetBrains/kotlin/5dd9cea66ee526f0251c9b1d2543229202622f6b/license/NOTICE.txt", "sha256": "0b09a83d3ef7795c7dec65e815866597c066c53898f2852a76599b8f5552941a" },
+        { "file": "license/COPYRIGHT.txt", "url": "https://raw.githubusercontent.com/JetBrains/kotlin/5dd9cea66ee526f0251c9b1d2543229202622f6b/license/COPYRIGHT.txt", "sha256": "8f1a1700adb5490604c6094fb137bf73f6c28d3ee554b58f3ff8ef975a79672d" }
+      ]
+    },
+    "coroutines164": {
+      "basis": "Original LICENSE from kotlinx.coroutines 1.6.4.",
+      "files": [{ "file": "LICENSE.txt", "url": "https://raw.githubusercontent.com/Kotlin/kotlinx.coroutines/81e17dd37003a7105e542eb725f51ee0dc353354/LICENSE.txt", "sha256": "b1febe6399dffb10d19d35e7663ab16300c93cb0476a94115df1cc0097a8ffd8" }]
+    },
+    "annotations13": {
+      "basis": "The immutable org.jetbrains:annotations:13.0 Maven POM declares Apache License 2.0 and points to the Apache license. No author copyright line is synthesized.",
+      "declarationUrl": "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/13.0/annotations-13.0.pom",
+      "files": [{ "file": "Apache-2.0.txt", "url": "https://www.apache.org/licenses/LICENSE-2.0", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30" }]
+    },
+    "jspecify100": {
+      "basis": "Original LICENSE from jspecify v1.0.0.",
+      "files": [{ "file": "LICENSE", "url": "https://raw.githubusercontent.com/jspecify/jspecify/b2a10e14bb81c1b7cb6e488c112fe55cb2218d7d/LICENSE", "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30" }]
+    },
+    "rustlsAndroid020": {
+      "basis": "The Maven support AAR is built by rustls-platform-verifier-android 0.2.0; its published .cargo_vcs_info.json selects this commit. MIT is selected from the upstream MIT OR Apache-2.0 grant.",
+      "files": [{ "file": "LICENSE-MIT", "url": "https://raw.githubusercontent.com/rustls/rustls-platform-verifier/252e25161a91af476cbea620e29d277592d27ec7/LICENSE-MIT", "sha256": "1c7cf76689c837a68ed8d704994e52a0f2940c087958f860d17f3186afbdcc0c" }]
+    }
+  },
+  "packages": {
+    "androidx.annotation:annotation-experimental:1.4.1": "androidx",
+    "androidx.annotation:annotation-jvm:1.8.1": "androidx",
+    "androidx.arch.core:core-common:2.2.0": "androidx",
+    "androidx.arch.core:core-runtime:2.2.0": "androidx",
+    "androidx.collection:collection-jvm:1.4.2": "androidx",
+    "androidx.concurrent:concurrent-futures:1.1.0": "androidx",
+    "androidx.interpolator:interpolator:1.0.0": "androidx",
+    "androidx.lifecycle:lifecycle-common:2.6.2": "androidx",
+    "androidx.lifecycle:lifecycle-runtime:2.6.2": "androidx",
+    "androidx.profileinstaller:profileinstaller:1.3.0": "androidx",
+    "androidx.startup:startup-runtime:1.1.1": "androidx",
+    "androidx.tracing:tracing:1.2.0": "androidx",
+    "androidx.versionedparcelable:versionedparcelable:1.1.1": "androidx",
+    "com.google.guava:listenablefuture:1.0": "guava26",
+    "com.google.zxing:core:3.5.4": "zxing354",
+    "org.jetbrains.kotlin:kotlin-stdlib:2.1.0": "kotlin210",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4": "coroutines164",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.6.4": "coroutines164",
+    "org.jetbrains:annotations:13.0": "annotations13",
+    "org.jspecify:jspecify:1.0.0": "jspecify100",
+    "org.rustls:rustls-platform-verifier:0.2.0": "rustlsAndroid020"
+  }
+}
