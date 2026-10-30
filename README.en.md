@@ -4,140 +4,108 @@
 
 <h1 align="center">DSH Mobile iroh</h1>
 
-<p align="center">Keep using DeepSeek Harness on your computer through an encrypted direct or relayed phone connection.</p>
+<p align="center">An iroh transport-component distribution and standalone prototype for DSH Mobile.</p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/dsh-mobile-iroh"><img src="https://img.shields.io/npm/v/dsh-mobile-iroh/alpha?label=npm%20alpha&color=CB3837" alt="npm test version"></a>
+  <a href="https://www.npmjs.com/package/dsh-mobile-iroh"><img src="https://img.shields.io/npm/v/dsh-mobile-iroh/alpha?label=npm%20component&color=CB3837" alt="npm experimental component version"></a>
   <a href="https://github.com/saya-ch/dsh-mobile-iroh/actions/workflows/ci.yml"><img src="https://github.com/saya-ch/dsh-mobile-iroh/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases"><img src="https://img.shields.io/badge/Android-10%2B-3DDC84?logo=android&logoColor=white" alt="Android 10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F172A" alt="MIT"></a>
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#pairing-and-connecting">Pairing</a> ·
-  <a href="#device-management">Devices</a> ·
-  <a href="#relationship-to-dsh-mobile">DSH Mobile</a> ·
-  <a href="#security-and-connection-experience">Security</a> ·
-  <a href="#compatibility">Compatibility</a> ·
+  <a href="#current-role">Current role</a> ·
+  <a href="#use-iroh-in-the-main-project">Use in DSH Mobile</a> ·
+  <a href="#the-main-projects-component-dependency">Component dependency</a> ·
+  <a href="#standalone-prototype">Standalone prototype</a> ·
+  <a href="#development-and-licenses">Development and licenses</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="README.md">简体中文</a>
 </p>
 
-> DSH Mobile iroh is an independent experimental project related to [DSH Mobile](https://github.com/saya-ch/dsh-mobile), not an official DeepSeek product.
+> **iroh is integrated into the [main DSH Mobile project](https://github.com/saya-ch/dsh-mobile).** Since main-plugin and App version 0.7.0, everyday use should follow the main plugin and its **full Android App with iroh**. You do not need this repository's separate plugin or App.
 >
-> **Current version: 0.1.0-alpha.1 (testing channel).** The computer plugin uses npm's `alpha` channel; Android uses an independently release-signed build. This initial version remains experimental.
-> npm also attached `latest` to this first publication, so an untagged install currently selects the alpha too. This does not make it stable. Install `dsh-mobile-iroh@alpha` explicitly.
->
-> The plugin and App have independent version numbers and releases. This separate App does not replace the original DSH Mobile or automatically migrate its paired devices.
+> This repository is not merely an archive: the main plugin still uses the published `dsh-mobile-iroh@0.1.0-alpha.1` package as its computer-side transport-component source. The original standalone prototype, downloads and verification records remain available too. This is a community project, not an official DeepSeek product.
+
+## Current role
+
+This project began as an independent test of direct/relayed iroh access to DSH, with a separate plugin and Android App. After integration, the user entry point and integrated implementation moved to the main repository. This repository remains a **source of currently consumed component releases, a standalone prototype and a design reference**.
+
+| Area | Current location |
+| --- | --- |
+| Everyday installation, mobile UI, device management and integration issues | [Main DSH Mobile repository](https://github.com/saya-ch/dsh-mobile) |
+| Integrated Host, shared transport core and native Android implementation | The main repository's [native/iroh-host](https://github.com/saya-ch/dsh-mobile/tree/main/native/iroh-host), [native/iroh-core](https://github.com/saya-ch/dsh-mobile/tree/main/native/iroh-core) and [apps/mobile](https://github.com/saya-ch/dsh-mobile/tree/main/apps/mobile) |
+| Windows/Linux computer-side components currently downloaded by the main plugin | This repository's published npm `0.1.0-alpha.1` package, selected by the main component catalog's version and checksums |
+| Standalone plugin/App, prototype design and historical verification | This repository's source, documentation and [Releases](https://github.com/saya-ch/dsh-mobile-iroh/releases) |
+
+Integration does not mean the release dependency has disappeared, nor that this repository's standalone App updates alongside the main App. The two Apps have separate package identities, signers and pairing data; **automatic migration is not implemented**.
+
+## Use iroh in the main project
+
+1. Install and enable [dsh-mobile](https://github.com/saya-ch/dsh-mobile/blob/main/README.en.md#quick-start) in DSH on the computer.
+2. Install the main project's **full Android App with iroh**. Its compatibility APK and mobile browsers do not provide native iroh transport.
+3. On the computer, open **Mobile access → Remote access → iroh (experimental)**. Choose **Install official component**, then enable the connection and generate a pairing QR code.
+4. Scan it using the main App's iroh pairing entry. Use its paired-device list for subsequent connections.
+
+Follow the main repository's [iroh guide](https://github.com/saya-ch/dsh-mobile/blob/main/docs/IROH.en.md) for current steps, supported platforms and troubleshooting. Records from the standalone App do not automatically appear in the main App: scan a new QR when switching, keep the old records until the new connection works, then remove them yourself if desired.
+
+iroh attempts an encrypted direct connection and uses an available relay when needed, without requiring a public domain or port forwarding first. DSH must remain running, and the networks must permit access to the required services. A local started state does not establish public-network phone reachability.
+
+## The main project's component dependency
+
+This is not an ordinary npm runtime dependency requiring both plugins to be enabled. The main plugin's component manager selects and verifies a native executable instead of requiring users to activate the standalone `dsh-mobile-iroh` plugin.
+
+- An explicit **Install official component** action downloads the platform binary from a fixed-version npm CDN URL, checks its byte length and SHA-256, then installs it in the main plugin's private component directory. Enabling the channel alone does not download it.
+- An already installed standalone companion package can supply a verified copy without another download.
+- The current selected version is **`dsh-mobile-iroh@0.1.0-alpha.1`**, not whatever npm `alpha` or `latest` happens to select. The main [component catalog](https://github.com/saya-ch/dsh-mobile/blob/main/src/iroh-component.ts) owns exact URLs, platforms, sizes and checksums.
+
+| Platform | File in the pinned component package |
+| --- | --- |
+| Windows x64 | `native/dsh-mobile-iroh-host-win32-x64.exe` |
+| Linux x64 (glibc) | `native/dsh-mobile-iroh-host-linux-x64` |
+
+These releases still have consumers and must not be removed or replaced merely because the code was integrated. A future distribution-source migration must first update the main catalog and pass the relevant acceptance checks. This README change does not alter downloads, versions or verification policy.
+
+## Standalone prototype
+
+Standalone `0.1.0-alpha.1` remains available for existing deployments, experiments and development reference. **It is not the recommended installation path for new users.** Its baseline below is not the current main project's minimum version or compatibility scope.
+
+<details>
+<summary>Standalone prototype downloads, installation and verification baseline</summary>
 
 <p align="center">
-  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/app-icon-rounded.svg" alt="DSH Mobile iroh Android app icon" width="72" height="72"></a><br>
-  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><strong>Download Android App 0.1.0-alpha.1</strong></a><br>
-  <sub><a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/tag/android-v0.1.0-alpha.1">Release notes and checksums</a></sub>
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><img src="https://raw.githubusercontent.com/saya-ch/dsh-mobile-iroh/main/assets/brand/app-icon-rounded.svg" alt="Standalone DSH Mobile iroh prototype app icon" width="72" height="72"></a><br>
+  <a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/download/android-v0.1.0-alpha.1/dsh-mobile-iroh-android-v0.1.0-alpha.1.apk"><strong>Download standalone prototype App 0.1.0-alpha.1</strong></a><br>
+  <sub><a href="https://github.com/saya-ch/dsh-mobile-iroh/releases/tag/android-v0.1.0-alpha.1">Initial release notes and checksums</a></sub>
 </p>
 
-The project reuses DSH Mobile's mobile interface and pairing experience, with iroh carrying the connection between phone and computer: it attempts a direct connection and uses an available relay when direct connectivity is unavailable. You do not need to prepare a public domain, port forwarding, or another HTTPS tunnel first. DSH must still be running on the computer, and both networks must permit access to the required discovery and relay services.
+- Prototype verification baseline: **official DSH Desktop / DSH 0.2.1-rc.2 + dsh-mobile 0.6.16**.
+- Computer targets are Windows x64 and Linux x64 (glibc). The npm package includes the native transport executable; users do not need Rust. Alpine/musl builds are not included.
+- The standalone APK supports Android 10+ with arm64-v8a and x86_64, not 32-bit devices. Its release signer differs from the main App's; the packages must not overwrite each other.
 
-Sessions, workspaces and tools still come from DSH on the computer. This project does not modify DSH Core or run a separate agent on the phone.
-
-## Features
-
-- **Use the DSH already running on your computer:** access its workspaces, sessions and plugin pages without copying session data.
-- **Less tunnel configuration:** discover the computer and establish an encrypted connection through iroh without first setting up cpolar, cloudflared or a self-hosted reverse proxy.
-- **Familiar mobile experience:** retain the touch interface, device list, startup preferences, web settings and native Back behavior.
-- **QR pairing:** the App checks the computer identity and private certificate before saving device credentials.
-- **Multiple computers:** assign local names, connect to the most recently used computer, pair again or remove a local record.
-- **Cancellable connection recovery:** connection and reconnection have a cancel action and an overall time budget; recovery tries to preserve the current page and unsent draft.
-- **Computer-side management:** open the manager from DSH General settings to start/stop connections, generate QR codes, view transport peers and revoke authorization.
-
-## Quick start
-
-### 1. Prepare your computer and phone
-
-- Run official DSH Desktop or DSH Web on the computer, with **dsh-mobile 0.6.16** installed and enabled.
-- This test version supports **Windows x64 and Linux x64 (glibc)** on the computer. The npm package includes the native transport executable; users do not need Rust. Alpine/musl builds are not included.
-- Use **Android 10 or later**. The current APK includes arm64-v8a and x86_64; 32-bit devices are not supported.
-
-The main Mobile plugin supplies the mobile frontend. You do not need to enable its LAN or remote channel separately for iroh. iroh has independent startup preferences, certificates and pairing records.
-
-### 2. Install the computer plugin
-
-**Official DSH Desktop:** install and enable `dsh-mobile-iroh@alpha` in plugin management, then open **Settings → General → DSH Mobile iroh → Open manager**.
-
-**DSH Web:** use the current DSH CLI to install into the web profile:
+In that prototype environment, official Desktop can install `dsh-mobile-iroh@0.1.0-alpha.1` through plugin management. DSH Web can pin the initial combination:
 
 ```powershell
-dsh plugin --profile web add dsh-mobile@0.6.16 dsh-mobile-iroh@alpha
+dsh plugin --profile web add dsh-mobile@0.6.16 dsh-mobile-iroh@0.1.0-alpha.1
 ```
 
-Restart DSH normally if the installer requests it, then open the manager from General settings. Official Desktop manages its own profile; do not use the `--profile web` command to modify Desktop.
+This is a **historical prototype installation command**, not an instruction to downgrade the main project or modify Desktop's profile. npm `alpha` and `latest` currently both select the initial alpha; neither establishes a standalone stable release.
 
-The manager connects to the current DSH automatically; there is no need to copy a DSH login token. Click **Start**, then generate a pairing QR code. Management listens only on the computer's loopback address, not on a public management endpoint.
+Restart normally if requested, open **Settings → General → DSH Mobile iroh → Open manager**, start the connection and generate a QR, then scan with the standalone App. The main Mobile plugin supplies the frontend. The prototype keeps its own enabled state, certificates and pairing records; it does not need the main plugin's LAN or HTTPS remote channel enabled separately.
 
-### 3. Install the separate Android App
+The prototype retains a device list, naming, startup preferences and cancellable connections. Transport-peer authorization and Mobile device-token revocation are separate layers; ordinary disconnection is not revocation. Its Gateway does not automatically synchronize the main plugin's extension directory, running extension services or third-party WebSocket allow rules. This does not establish compatibility with every plugin combination.
 
-Download the release-signed APK using the link above or this repository's [Releases](https://github.com/saya-ch/dsh-mobile-iroh/releases). Install **DSH Mobile iroh**, not a replacement for the original DSH Mobile.
+Some pairing, page-loading, reconnection and revocation checks completed on an Android 16 phone using a cellular network. They do not cover every network or current DSH version. Hot-update and long-session recovery limits remain documented in [VERIFICATION](VERIFICATION.md); they were not retested by this documentation change.
 
-Local Debug and release packages have different signers and cannot directly overwrite one another. Future release upgrades must retain the release signer. Do not clear the original DSH Mobile's data to resolve a signing conflict.
+[Prototype management and extensions](operator/README.md) · [Standalone App manual](apps/mobile/README.md) · [Prototype architecture](docs/ARCHITECTURE.md) · [Prototype integration design reference](docs/INTEGRATION_SEAM.md)
 
-## Pairing and connecting
+</details>
 
-1. Open the iroh manager on the computer, start the connection and generate a QR code.
-2. In the separate App, choose **iroh connection (experimental) → Scan to pair**. You can also paste the full pairing information.
-3. Name the computer after pairing, then enter DSH.
-4. Open that computer from the paired-device list next time. Scanning again is unnecessary while its identity, certificate and authorization remain valid.
+## Development and licenses
 
-QR codes contain one-time credentials. Use them only between trusted computers and phones. Do not post an active QR, full pairing text or management login link in an issue.
+Use [dsh-mobile](https://github.com/saya-ch/dsh-mobile) for everyday features and main-project integration changes. Report standalone-prototype, component-distribution or historical-reproduction issues here. Name the plugin/App combination, versions, platform and network conditions; hide active QR codes, tokens, cookies, private keys and private conversations.
 
-iroh discovers the peer through a persistent computer identity, so an address change does not necessarily require pairing again. Network blocks, computer sleep or temporarily unavailable public services can still cause connection failures. Cancel and retry later; network failure is not reported as device removal.
+Transport encryption does not replace Gateway authorization. The App must still verify the full computer identity's HTTPS hostname and pinned CA, while the Gateway retains device sessions, Origin, CSRF and WebSocket path checks. [SECURITY](SECURITY.md) describes the standalone prototype's state and permissions; the main repository owns integrated-product instructions.
 
-## Device management
+[Development and validation](CONTRIBUTING.md) · [Historical implementation record](docs/IMPLEMENTATION_PLAN.md) · [Changelog](CHANGELOG.md)
 
-The **Paired devices** page lists saved computers. Tap an entry to connect; long-press or use its more button to rename, pair again or delete the local record. Names affect only this App.
-
-Device-list settings offer two startup behaviors:
-
-- **Open DSH directly:** try the most recently used computer, including when multiple computers are saved.
-- **Show device list:** choose a computer whenever the App opens.
-
-Inside DSH, use the web page's **Settings → General → Switch computer** to return to the list. Deleting a local record does not stop DSH on the computer or affect another phone.
-
-After an online device is revoked on the computer, the App retains its entry and displays **Removed on computer**, with options to pair again or delete the local record. If only iroh transport authorization is revoked while the device is offline, its next connection may receive only a generic failure. This differs from Mobile Gateway device-token revocation; ordinary disconnection is not misreported as revocation.
-
-## Relationship to DSH Mobile
-
-| | DSH Mobile | DSH Mobile iroh |
-| --- | --- | --- |
-| Phone-to-computer connection | LAN or remote HTTPS entry | iroh direct/relay transport with internal HTTPS Gateway verification |
-| Phone client | Android App or mobile browser | Separate Android App with native iroh transport |
-| Mobile frontend | Supplied by the main Mobile plugin | Reuses the enabled main Mobile frontend |
-| Pairing and state | Managed by the main plugin and original App | Stored separately; no automatic migration |
-| Current role | Actively maintained main project | Independent testing path; future integration will be evaluated separately |
-
-Ordinary DSH pages and loaded plugins still come from the current computer. The main Mobile custom-extension directory, running extension services and third-party WebSocket allow rules do not automatically synchronize to the independent Gateway. Not every community-plugin combination is promised to work without configuration. [Independent management and extensions](operator/README.md)
-
-## Security and connection experience
-
-iroh transport and Gateway authorization work at separate layers. In addition to the end-to-end encrypted connection, the App verifies the HTTPS hostname derived from the full computer identity and its pinned CA. Web requests remain subject to device sessions, Origin, CSRF and WebSocket path rules.
-
-The App encrypts Mobile credentials with Android Keystore. Its long-term iroh identity key is stored in the backup-disabled, app-private directory and is not currently wrapped by hardware Keystore. A paired device can operate the computer's DSH and must be treated as fully trusted. Revoke the appropriate authorization if a phone is lost. [Security details](SECURITY.md)
-
-A successful direct connection typically avoids a relay hop, but not every NAT, firewall or carrier permits it. Network policies can also affect public discovery and relay services. The manager reporting that the local service has started does not by itself establish public-network phone reachability.
-
-## Compatibility
-
-Current acceptance uses **official DSH Desktop / DSH 0.2.1-rc.2** and **dsh-mobile 0.6.16**. This initial version uses numeric-loopback HTTP for the DSH upstream inside the computer; phone-to-computer traffic remains encrypted. Arbitrary public URLs are not supported as forwarding targets.
-
-The initial version has recovery limits: after a computer-side plugin hot update, the open page's module list may need a reload. An expired web session after extended use may also require reopening the computer from the device list. Neither requires pairing again. Save any draft before reopening.
-
-Some real pairing, page-loading, reconnection and revocation checks have completed on an Android 16 phone using a cellular network. This does not cover every network, phone or third-party plugin. See [VERIFICATION](VERIFICATION.md) for recorded results and remaining work.
-
-## Contributing
-
-Clear reproduction steps, versions and network details are welcome, as are small, focused improvements. Hide QR codes, tokens, cookies, private keys and private session content when reporting a problem.
-
-[Development and validation](CONTRIBUTING.md) · [Android builds](apps/mobile/README.md) · [Architecture](docs/ARCHITECTURE.md) · [Implementation progress](docs/IMPLEMENTATION_PLAN.md) · [Changelog](CHANGELOG.md)
-
-The Rust baseline references [zexadev/dsh-tether](https://github.com/zexadev/dsh-tether); the mobile experience and code baseline come from [DSH Mobile](https://github.com/saya-ch/dsh-mobile); transport uses [iroh](https://github.com/n0-computer/iroh). Thanks to these open-source projects. Attribution and licenses are retained in [NOTICE](NOTICE), the [original MIT license](LICENSE.dsh-tether) and the [DSH Mobile Apache-2.0 license](LICENSE.dsh-mobile). Original code in this repository is available under [MIT](LICENSE); no upstream endorsement is implied.
+The Rust baseline references [zexadev/dsh-tether](https://github.com/zexadev/dsh-tether); the mobile experience and code baseline come from [DSH Mobile](https://github.com/saya-ch/dsh-mobile); transport uses [iroh](https://github.com/n0-computer/iroh). Attribution and licenses remain in [NOTICE](NOTICE), the [original MIT license](LICENSE.dsh-tether) and the [DSH Mobile Apache-2.0 license](LICENSE.dsh-mobile). Original code in this repository is available under [MIT](LICENSE); no upstream endorsement is implied.

@@ -1,6 +1,6 @@
-# Future DSH Mobile integration
+# Independent prototype integration reference
 
-The independent repository owns implementation and acceptance until integration is deliberately authorized. No main-repository code or installed DSH frontend is changed by this work.
+iroh integration shipped in DSH Mobile 0.7.0. The sections below retain the independent prototype's design and pre-integration checklist, not the main project's current list of unfinished work. See the [current repository role](../README.en.md#current-role) and the main [iroh guide](https://github.com/saya-ch/dsh-mobile/blob/main/docs/IROH.en.md) for current use and component ownership. No main-repository code or installed DSH frontend is changed by this document.
 
 ## Transport model
 
@@ -14,15 +14,15 @@ Neither sidecar may inject a DSH launch Cookie, rewrite frontend constants, expo
 
 ## Main-plugin seam
 
-The existing main-plugin RemoteProvider is a closed union and its controller table is not a dynamic third-party registry. A future integration needs an explicitly reviewed provider declaration, configuration, status/admin handling and lifecycle registration. The independent [IrohRemoteController](../src/iroh-remote-controller.mjs), [host operator API](../integration/host-session.mjs) and [Gateway factory](../integration/mobile-gateway-factory.mjs) are the parts to connect; they are not already registered in the main plugin.
+The prototype's independent [IrohRemoteController](../src/iroh-remote-controller.mjs), [host operator API](../integration/host-session.mjs) and [Gateway factory](../integration/mobile-gateway-factory.mjs) remain reference implementations. The integrated main plugin owns its provider declaration, configuration, status/admin handling and lifecycle registration. Do not mount these independent owners beside that provider as though its controller table were a dynamic third-party registry.
 
-The independent Host persists its enabled preference through [NativePreferenceStore](../integration/native-preference-store.mjs), non-secret configuration through [NativeConfigStore](../integration/native-config-store.mjs), and TLS through [NativeTlsManager](../integration/native-tls-manager.mjs). Their fixed native state has separate leases from the running transport. `restore()` honors the saved choice without enabling an off gateway; `start()` is explicit enable, `stop()` is durable disable, and `close()` retains the preference. The independent [operator](../operator/README.md) composes these owners; main-plugin settings registration remains separate integration work.
+The independent Host persists its enabled preference through [NativePreferenceStore](../integration/native-preference-store.mjs), non-secret configuration through [NativeConfigStore](../integration/native-config-store.mjs), and TLS through [NativeTlsManager](../integration/native-tls-manager.mjs). Their fixed native state has separate leases from the running transport. `restore()` honors the saved choice without enabling an off gateway; `start()` is explicit enable, `stop()` is durable disable, and `close()` retains the preference. The independent [operator](../operator/README.md) composes these owners; the main plugin uses its own integrated settings and lifecycle.
 
 The Gateway factory uses public exports. It must preserve required/dependency module rules, shared upstream authentication ownership, per-device HTTP authorization and existing provider behavior. Its fixed logical authority port currently also determines the backend listener port; do not bypass parseGatewayConfig to change that invariant.
 
 ## Android seam
 
-Keep the existing package, Keystore, paired records, startup preference, page identity, cancellation and signer during a separately reviewed main-App integration. New transport metadata must be optional/versioned; HTTPS/LAN/remote records must remain readable without migration guesses.
+Further changes to the integrated main App must preserve its package, Keystore, paired records, startup preference, page identity, cancellation and signer. New transport metadata must be optional/versioned; HTTPS/LAN/remote records must remain readable without migration guesses.
 
 A saved iroh record needs its full peer identity, stable logical Origin/port and normal Mobile credential. Neither short pairing code nor the whole QR is a persistent credential. Cancel before replacing a transport; a late result must not restore an old page or close the new computer. A network error is not device revocation.
 
@@ -32,7 +32,7 @@ The independently signed alpha package `io.github.sayach.dshmobileiroh` is separ
 
 [Descriptor v1](../integration/pairing-descriptor.mjs) contains exactly the version/type, full endpoint identity, logical HTTPS Origin and local port, short iroh code, one-time Gateway token, public CA, CA fingerprint and expiry. It is short-lived, limited to 2200 UTF-8 bytes and validated before use. The operator smoke encodes both the actual descriptor and the byte limit as real byte-mode/M-correction QR symbols. Scanning is the user's out-of-band trust action; a self-signed certificate is not independent evidence that an untrusted QR belongs to the intended computer.
 
-Only a trusted host operator may open a pairing window. The embedded API is in-process; the independent browser console adds a numeric-loopback-only, single-use-login/session/CSRF-protected adapter. The installed companion reuses the current Desktop/Web connection service to authenticate a local launch action and keeps upstream authorization in memory. This existing companion is distinct from a future provider merged into the main Mobile plugin. Cancelling a displayed QR replaces both one-time windows without returning their replacements; already paired phones remain connected.
+Only a trusted host operator may open a pairing window. The embedded API is in-process; the independent browser console adds a numeric-loopback-only, single-use-login/session/CSRF-protected adapter. The installed companion reuses the current Desktop/Web connection service to authenticate a local launch action and keeps upstream authorization in memory. This companion is distinct from the integrated main Mobile provider. Cancelling a displayed QR replaces both one-time windows without returning their replacements; already paired phones remain connected.
 
 ## TLS and extension owners
 

@@ -2,6 +2,8 @@
 
 Read [AGENTS.md](AGENTS.md), keep source work in this independent repository, and leave DSH Core and the main DSH Mobile checkout unchanged. Use owned isolated profiles for automated tests; changing a user's installed profile or restarting their Desktop requires explicit authorization. Preserve pairings, contribution history and imported licenses.
 
+The [repository-role guide](README.en.md#current-role) distinguishes the integrated main project, this repository's still-consumed component releases and the standalone prototype. The standalone baselines and procedures below are not instructions to downgrade the main project; changes to integrated Mobile behavior belong in its repository.
+
 ## Source checks
 
 Use the Node engine range in [package.json](package.json). Current local Rust verification uses 1.99.1; Cargo.lock selects the exact transport dependencies. Do not update dependencies merely to get a failing test to pass.
@@ -99,11 +101,11 @@ The TLS smoke exercises the actual public Gateway through QUIC, CA/name rejectio
 
 [CI](.github/workflows/ci.yml) defines Windows/Linux and native Android jobs. A workflow file is not a passing run. Keep source checks, built artifacts, local QUIC, Android/JNI, physical devices and public topology distinct.
 
-The installable companion and its independent App have separate release paths. Do not push, tag, publish npm/APK, change the main plugin or promote a signer/download descriptor unless that action is explicitly authorized. Integration into the main DSH Mobile project additionally requires the acceptance gates in [INTEGRATION_SEAM](docs/INTEGRATION_SEAM.md); publishing this independent alpha does not complete that integration.
+The installable companion and its independent App have separate release paths. Do not push, tag, publish npm/APK, change the main plugin or promote a signer/download descriptor unless that action is explicitly authorized. Main-project integration shipped in 0.7.0; [INTEGRATION_SEAM](docs/INTEGRATION_SEAM.md) retains the prototype's design and pre-integration checks. A component release consumed by the main project must also be checked against its current component catalog, protocol and consumers; publishing another independent alpha does not switch those consumers to it.
 
 ### Installed companion acceptance
 
-The package's [bundle patch](cordis.patch.yml) adds only `dsh-mobile-iroh`. It depends on the current profile's enabled main Mobile plugin for the frontend, without overriding its directory picker, remote channel or extension service. Use `dsh-mobile 0.6.16` for the current candidate. Native Host executables are selected from the package's hash-pinned manifest; the profile supplies the declared DSH/Cordis peers.
+The package's [bundle patch](cordis.patch.yml) adds only `dsh-mobile-iroh`. It depends on the current profile's enabled main Mobile plugin for the frontend, without overriding its directory picker, remote channel or extension service. The original standalone verification baseline uses `dsh-mobile 0.6.16`, not the main project's current version. Native Host executables are selected from the package's hash-pinned manifest; the profile supplies the declared DSH/Cordis peers.
 
 Build with `npm run build:client` before packing. The Client export must resolve to the generated `lib/client.js` factory, not the ESM source. With the isolated public runtime configured, run `node plugin/smoke-client-registry.mjs <installed-package-directory>` against the actual installed tarball to verify DSH's selected export and executable startup batch. Run `node plugin/smoke-managed-ui.mjs` for the automatic-Host management form; wire tests in `plugin/desktop-wire.test.mjs` cover official Desktop's streamed forwarding separately from ordinary browser POSTs.
 

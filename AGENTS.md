@@ -1,8 +1,11 @@
 # Agent maintenance
 
-`dsh-mobile-iroh` is an independent transport companion for DSH Mobile. Keep
-iroh transport, sidecar, protocol, and client work in this repository until a
-stable integration seam is deliberately upstreamed to `dsh-mobile`.
+`dsh-mobile-iroh` retains the standalone transport prototype and published
+Host artifacts still consumed by DSH Mobile. Integrated Host, shared transport
+core and Android implementation have lived in `dsh-mobile` since 0.7.0. Read
+the [current repository role](README.en.md#current-role) before choosing where
+work belongs; do not describe integration as pending or retire artifacts that
+the main component catalog still references.
 
 Do not modify `C:\develop\dsh-mobile` or `C:\develop\deepseek-harness` while
 working here. Read those repositories to compare contracts; their source and
