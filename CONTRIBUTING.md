@@ -99,9 +99,18 @@ The TLS smoke exercises the actual public Gateway through QUIC, CA/name rejectio
 
 ## Integration and publication
 
-[CI](.github/workflows/ci.yml) defines Windows/Linux and native Android jobs. A workflow file is not a passing run. Keep source checks, built artifacts, local QUIC, Android/JNI, physical devices and public topology distinct.
+[CI](.github/workflows/ci.yml) defines Windows/Linux transport jobs, a native macOS Host job (`macos-15-intel` for `darwin-x64`, `macos-15` for `darwin-arm64`) and native Android jobs. A workflow file is not a passing run. Keep source checks, built artifacts, local QUIC, macOS runtime results, Android/JNI, physical devices and public topology distinct.
 
 The installable companion and its independent App have separate release paths. Do not push, tag, publish npm/APK, change the main plugin or promote a signer/download descriptor unless that action is explicitly authorized. Main-project integration shipped in 0.7.0; [INTEGRATION_SEAM](docs/INTEGRATION_SEAM.md) retains the prototype's design and pre-integration checks. A component release consumed by the main project must also be checked against its current component catalog, protocol and consumers; publishing another independent alpha does not switch those consumers to it.
+
+### Native Host artifacts
+
+The package ships four native Host executables, one per supported target: `win32-x64`, `linux-x64`, `darwin-x64` and `darwin-arm64`. `src/native-artifact.mjs` owns the target table, `native/manifest.json` binds each file to its byte length and SHA-256, and `scripts/check-release.mjs` verifies the whole inventory before anything is packed.
+
+- Each target is compiled on a runner of its own platform. A Windows machine cannot produce a macOS Host: `cargo build --target aarch64-apple-darwin` fails at link time because rustc cannot find a macOS SDK (`xcrun --sdk macosx --show-sdk-path` is unavailable and the local `cc` rejects `-arch arm64`), and Apple Silicon additionally requires an arm64 Mach-O with at least an ad-hoc code signature. Do not substitute an unofficial Darwin SDK or a third-party linker for a macOS runner, and do not upload a Host that never ran on its own platform.
+- A platform whose binary is not built yet must be declared in `native/manifest.json` as `pendingTargets` rather than described as supported. Resolution then fails closed with `iroh_native_artifact_pending`, `npm run check:release` fails with `iroh_release_native_pending`, and packing writes a complete manifest without `pendingTargets`, so a release candidate can never carry a declared-only platform.
+- `npm run release:pack -- --windows <exe> --linux <elf> --darwin-x64 <mach-o> --darwin-arm64 <mach-o> --output <dir>` requires all four absolute inputs. `scripts/pack-release.mjs` rejects a wrong CPU type or file type, requires the arm64 `LC_CODE_SIGNATURE`, and keeps the executable bit for every POSIX binary in the archive.
+- The installed-package runtime check runs on Windows, Linux, macOS arm64 and macOS Intel, and the Host/`core` Rust suites plus Clippy run on macOS in the same job, so a macOS artifact cannot ship with only a source-level result.
 
 ### Installed companion acceptance
 
@@ -121,6 +130,8 @@ gh workflow run release.yml --repo saya-ch/dsh-mobile-iroh --ref android-v0.1.0-
 ```
 
 The npm workflow requires this repository's own publishing authorization (`DSH_IROH_NPM_TOKEN` or a configured trusted publisher). Local `npm login` does not authorize GitHub Actions. When publishing locally, download the successful exact-candidate CI tarball, verify its SHA256, complete installed Desktop acceptance and publish that unchanged file with `npm publish <tested-tarball> --tag alpha --access public --ignore-scripts`. Run `node scripts/verify-published-npm.mjs <absolute-tested-tarball> <version>` afterward. For an independently accepted signed APK, create the matching `android-v...` GitHub Release and upload the same verified APK, checksum and notices; do not rebuild it between acceptance and upload. Keep product-alpha releases marked prerelease and do not deliberately promote subsequent alpha versions to `latest`.
+
+A candidate carrying macOS Hosts (from `0.1.0-alpha.2`, tag `npm-v0.1.0-alpha.2`) additionally requires a green macOS run: both darwin artifacts present, ad-hoc signed where required, exercised by the installed-package check on macOS arm64 and Intel, and their sizes and SHA-256 recorded in `native/manifest.json` by `npm run release:pack`. Do not create the tag, and do not publish, while `pendingTargets` is non-empty or while any darwin binary exists only outside CI. A macOS result is required evidence for this release; the Windows/Linux results do not stand in for it.
 
 The first `0.1.0-alpha.1` publication received both `alpha` and `latest` despite `--tag alpha`; the authenticated attempt to remove `latest` returned 400. This matches [npm's reported first-publication behavior](https://github.com/npm/cli/issues/8490). For this existing bootstrap only, the verifier accepts explicit `--allow-initial-latest` after checking the fixed first version, original alpha publish configuration, sole maintainer, limited version/tag set and unchanged artifact integrity. It reports the public aliases instead of claiming `latest` is absent. Default verification remains strict; later versions cannot use this exception. Do not create a fake stable release, unpublish the tested version or repeatedly request authentication to conceal the registry behavior.
 

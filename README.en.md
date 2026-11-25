@@ -62,6 +62,10 @@ This is not an ordinary npm runtime dependency requiring both plugins to be enab
 | --- | --- |
 | Windows x64 | `native/dsh-mobile-iroh-host-win32-x64.exe` |
 | Linux x64 (glibc) | `native/dsh-mobile-iroh-host-linux-x64` |
+| macOS Intel (x64) | `native/dsh-mobile-iroh-host-darwin-x64` |
+| macOS Apple Silicon (arm64) | `native/dsh-mobile-iroh-host-darwin-arm64` |
+
+The two macOS artifacts only enter the package from `0.1.0-alpha.2`; `0.1.0-alpha.1` carries Windows and Linux binaries only, so macOS is unavailable on that version. macOS binaries must be built natively on macOS CI runners: linking a Rust Apple target needs the macOS SDK, and Apple Silicon additionally requires an arm64 Mach-O with a code signature, so they cannot be cross-compiled on Windows or Linux. While an artifact does not exist yet, `native/manifest.json` names it in `pendingTargets`; resolution then fails closed with `iroh_native_artifact_pending` and the release gate refuses to pack with `iroh_release_native_pending`, so "not built yet" is never reported as "supported".
 
 These releases still have consumers and must not be removed or replaced merely because the code was integrated. A future distribution-source migration must first update the main catalog and pass the relevant acceptance checks. This README change does not alter downloads, versions or verification policy.
 
@@ -80,6 +84,7 @@ Standalone `0.1.0-alpha.1` remains available for existing deployments, experimen
 
 - Prototype verification baseline: **official DSH Desktop / DSH 0.2.1-rc.2 + dsh-mobile 0.6.16**.
 - Computer targets are Windows x64 and Linux x64 (glibc). The npm package includes the native transport executable; users do not need Rust. Alpine/musl builds are not included.
+- From `0.1.0-alpha.2`, the same npm package also carries two native macOS hosts: Intel (`darwin-x64`) and Apple Silicon (`darwin-arm64`). That version is still being prepared: do not call macOS available, and do not treat it as completed macOS acceptance, until those binaries exist and their CI run has passed.
 - The standalone APK supports Android 10+ with arm64-v8a and x86_64, not 32-bit devices. Its release signer differs from the main App's; the packages must not overwrite each other.
 
 In that prototype environment, official Desktop can install `dsh-mobile-iroh@0.1.0-alpha.1` through plugin management. DSH Web can pin the initial combination:

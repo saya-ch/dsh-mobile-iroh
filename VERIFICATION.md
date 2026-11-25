@@ -251,6 +251,19 @@ The public probe has a total work budget and fails if its own cleanup fails. It 
 - Earlier fixtures supplied TLS explicitly. The current managed implementation provisions/renews private CA/leaf material through the native lease; corrupt state and CA expiry require explicit operator action instead of automatic identity/root replacement.
 - No production signing, published sidecar package or main-plugin provider registration has been accepted. The limited cellular-device observations above do not establish the complete deployment matrix; remote CI is recorded separately when run.
 
+## macOS Host preparation — 2026-11-25 (no macOS artifact or result yet)
+
+`0.1.0-alpha.2` is being prepared to ship `darwin-x64` and `darwin-arm64` Host executables. Neither binary exists yet and no macOS runtime result exists: this section records only what was established locally, so a later green CI run must be recorded as a new result.
+
+Local cross-compilation to an Apple target was attempted on the Windows development machine and does not work:
+
+- `rustup target add x86_64-apple-darwin aarch64-apple-darwin` succeeds, so `rust-std` availability is not the obstacle.
+- A minimal crate built with `cargo build --target aarch64-apple-darwin` fails at link time. rustc reports `invoking "xcrun" "--sdk" "macosx" "--show-sdk-path" to find MacOSX.sdk failed: program not found`, then `linking with 'cc' failed`: the local `cc` (w64devkit GCC 16.2.0) rejects rustc's Apple arguments with `unrecognized command-line option '-arch'` and `'-mmacosx-version-min=11.0.0'`.
+- The Host crate itself cannot even reach a darwin-specific step here: no MSVC linker is installed (`linker 'link.exe' not found`), and the `stable-x86_64-pc-windows-gnu` toolchain fails while linking *host* build scripts because w64devkit has no `libgcc_eh` (`cannot find -lgcc_eh`). Substituting the bundled Zig 0.15.2 as the Windows linker also fails (`unable to find dynamic system library 'msvcrt'`, unsupported `.def` argument).
+- Zig's `cc` can emit a Mach-O (`zig cc -target aarch64-macos` produced a dynamically linked arm64 image with an ad-hoc `LC_CODE_SIGNATURE`), and Apple's own headers are not required for that test program. That is a linker capability, not macOS support: the resulting Host would never have run on macOS here, and the repository does not ship an artifact whose only evidence is a cross-link.
+
+Consequently the darwin Hosts must be produced by the new macOS CI job, which builds each target on a runner of its own architecture (`macos-15-intel` for `darwin-x64`, `macos-15` for `darwin-arm64`; `macos-13` was retired on 2025-12-04 and the macOS 14 images on 2026-11-02), ad-hoc signs the Apple Silicon binary, checks the Mach-O architecture, signature and a real `id` run, and runs the installed-package runtime check plus the Host/core Rust suites on macOS. Until that run passes, `native/manifest.json` declares both targets in `pendingTargets` and the release gate refuses to pack.
+
 ## Historical reference, not current evidence
 
 The earlier comparison used `zexadev/dsh-tether` source `e1ffab8013f29d39321332be45b2c25d1ffcdaa4` and Windows reference sidecar 0.1.22 (executable SHA-256 `F45304EF7932EB55318F33BEA0F98BB03B0A2014FFF4261BCA891D65F69E1C1F`). Its approval/decision messages are not part of this repository's current protocol. The old HTTP identity demo is kept under [experiments/identity](experiments/identity/README.md).

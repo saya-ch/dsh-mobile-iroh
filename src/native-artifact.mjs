@@ -6,18 +6,32 @@ import { fileURLToPath } from 'node:url'
 export const NATIVE_TARGETS = Object.freeze({
   'win32-x64': 'dsh-mobile-iroh-host-win32-x64.exe',
   'linux-x64': 'dsh-mobile-iroh-host-linux-x64',
+  'darwin-x64': 'dsh-mobile-iroh-host-darwin-x64',
+  'darwin-arm64': 'dsh-mobile-iroh-host-darwin-arm64',
 })
 const MAX_BINARY_BYTES = 128 * 1024 * 1024
 const exactKeys = (value, keys) => value !== null && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).sort().join(',') === [...keys].sort().join(',')
 const fault = code => Object.assign(new Error(code), { code })
 
-/** Validate the complete package-bound inventory; artifact paths are never supplied by metadata. */
+/**
+ * Validate the complete package-bound inventory; artifact paths are never supplied by metadata.
+ * `pendingTargets` is the only way a supported target may be absent from `artifacts`: it is a
+ * release-time declaration that the binary has not been built yet, and every consumer fails closed
+ * on it. It never grants authority — it can only remove a target — and packing omits it entirely.
+ */
 export function validateNativeManifest(value, packageVersion) {
-  if (!exactKeys(value, ['schemaVersion', 'packageVersion', 'artifacts']) || value.schemaVersion !== 1
-    || value.packageVersion !== packageVersion || !exactKeys(value.artifacts, Object.keys(NATIVE_TARGETS))) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw fault('iroh_native_manifest_invalid')
+  const declaredPending = Object.hasOwn(value, 'pendingTargets')
+  const pending = declaredPending ? value.pendingTargets : []
+  if (!exactKeys(value, declaredPending ? ['schemaVersion', 'packageVersion', 'pendingTargets', 'artifacts'] : ['schemaVersion', 'packageVersion', 'artifacts'])
+    || value.schemaVersion !== 1 || value.packageVersion !== packageVersion
+    || declaredPending && (!Array.isArray(pending) || pending.length === 0 || pending.length >= Object.keys(NATIVE_TARGETS).length
+      || new Set(pending).size !== pending.length || pending.some(target => !Object.hasOwn(NATIVE_TARGETS, target)))) {
     throw fault('iroh_native_manifest_invalid')
   }
+  const expected = Object.keys(NATIVE_TARGETS).filter(target => !pending.includes(target))
+  if (!exactKeys(value.artifacts, expected)) throw fault('iroh_native_manifest_invalid')
   for (const [target, entry] of Object.entries(value.artifacts)) {
     if (!exactKeys(entry, ['file', 'bytes', 'sha256']) || entry.file !== NATIVE_TARGETS[target]
       || !Number.isSafeInteger(entry.bytes) || entry.bytes < 64 || entry.bytes > MAX_BINARY_BYTES
@@ -41,6 +55,7 @@ export async function resolveNativeHostAt(root, platform, arch) {
     const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
     manifest = validateNativeManifest(JSON.parse(await readFile(manifestPath, 'utf8')), pkg.version)
   } catch { throw fault('iroh_native_manifest_invalid') }
+  if ((manifest.pendingTargets ?? []).includes(target)) throw fault('iroh_native_artifact_pending')
   const expected = manifest.artifacts[target]
   const path = join(nativeDirectory, NATIVE_TARGETS[target])
   const before = await lstat(path).catch(() => { throw fault('iroh_native_missing') })

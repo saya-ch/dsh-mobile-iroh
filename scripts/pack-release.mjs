@@ -10,6 +10,12 @@ import { NATIVE_TARGETS } from '../src/native-artifact.mjs'
 import { checkRelease, validatePackedFiles } from './check-release.mjs'
 import * as tar from 'tar'
 
+const MH_MAGIC_64 = 0xfeedfacf
+const MH_EXECUTE = 0x2
+const LC_CODE_SIGNATURE = 0x1d
+const CPU_TYPE_X86_64 = 0x01000007
+const CPU_TYPE_ARM64 = 0x0100000c
+
 /** Validate actual executable architecture, not an extension or caller-provided label. */
 export function verifyBinaryHeader(bytes, target) {
   if (target === 'linux-x64') {
@@ -20,25 +26,52 @@ export function verifyBinaryHeader(bytes, target) {
     if (bytes.subarray(0, 2).toString() !== 'MZ' || offset < 64 || offset + 24 > bytes.length
       || bytes.subarray(offset, offset + 4).toString('hex') !== '50450000'
       || bytes.readUInt16LE(offset + 4) !== 0x8664) throw new Error('iroh_release_binary_target_mismatch')
+  } else if (target === 'darwin-x64' || target === 'darwin-arm64') {
+    // Thin little-endian MH_MAGIC_64 executable for exactly one Apple CPU, plus Apple's own
+    // arm64 rule: the kernel refuses to start an arm64 Mach-O without a code signature, and a
+    // macOS linker always emits at least an ad-hoc one. A cross-linked stub from a non-Mac host
+    // fails both checks, so it can never be staged as a darwin artifact.
+    if (bytes.length < 32 || bytes.readUInt32LE(0) !== MH_MAGIC_64 || bytes.readUInt32LE(12) !== MH_EXECUTE
+      || bytes.readUInt32LE(4) !== (target === 'darwin-arm64' ? CPU_TYPE_ARM64 : CPU_TYPE_X86_64)) {
+      throw new Error('iroh_release_binary_target_mismatch')
+    }
+    let offset = 32, signature = false
+    for (let index = 0, count = bytes.readUInt32LE(16); index < count; index += 1) {
+      if (offset + 8 > bytes.length) throw new Error('iroh_release_binary_target_mismatch')
+      const command = bytes.readUInt32LE(offset), size = bytes.readUInt32LE(offset + 4)
+      if (size < 8 || offset + size > bytes.length) throw new Error('iroh_release_binary_target_mismatch')
+      if (command === LC_CODE_SIGNATURE) signature = true
+      offset += size
+    }
+    if (target === 'darwin-arm64' && !signature) throw new Error('iroh_release_binary_unsigned')
   } else throw new Error('iroh_release_binary_target_unsupported')
 }
 
+const PACK_FLAGS = Object.freeze([
+  ['--windows', 'win32-x64', 'windows', 'EXE'],
+  ['--linux', 'linux-x64', 'linux', 'ELF'],
+  ['--darwin-x64', 'darwin-x64', 'darwinX64', 'Mach-O x86_64'],
+  ['--darwin-arm64', 'darwin-arm64', 'darwinArm64', 'Mach-O arm64'],
+  ['--output', 'output', 'output', 'directory'],
+])
+
 export function parsePackArguments(args) {
-  if (args.length !== 6 || args[0] !== '--windows' || args[2] !== '--linux' || args[4] !== '--output'
-    || [args[1], args[3], args[5]].some(value => !isAbsolute(value) || value.includes('\0'))) {
-    throw new Error('Expected --windows <absolute EXE> --linux <absolute ELF> --output <absolute directory>')
+  if (args.length !== PACK_FLAGS.length * 2 || PACK_FLAGS.some(([flag], index) => args[index * 2] !== flag
+    || !isAbsolute(args[index * 2 + 1] ?? '') || args[index * 2 + 1].includes('\0'))) {
+    throw new Error(`Expected ${PACK_FLAGS.map(([flag, , , kind]) => `${flag} <absolute ${kind}>`).join(' ')}`)
   }
-  return { windows: args[1], linux: args[3], output: args[5] }
+  return Object.fromEntries(PACK_FLAGS.map(([, , key], index) => [key, args[index * 2 + 1]]))
 }
 
 /** Use node-tar's supported entry hook to preserve Unix execution bits on Windows packing hosts. */
 export async function createReleaseArchive(root, file, paths) {
   const expected = new Map()
   for (const path of paths) expected.set(path, createHash('sha256').update(await readFile(join(root, path))).digest('hex'))
+  const native = new Set(Object.values(NATIVE_TARGETS).map(name => `native/${name}`))
   await pipeline(tar.c({ cwd: root, gzip: true, portable: true, noMtime: true, prefix: 'package/', strict: true,
     onWriteEntry(entry) {
       if (entry.type !== 'File' || !expected.has(entry.path)) throw new Error('iroh_release_archive_entry_invalid')
-      entry.stat.mode = entry.path === `native/${NATIVE_TARGETS['linux-x64']}` || entry.path === `native/${NATIVE_TARGETS['win32-x64']}` ? 0o755 : 0o644
+      entry.stat.mode = native.has(entry.path) ? 0o755 : 0o644
     },
   }, paths), createWriteStream(file, { flags: 'wx', mode: 0o644 }))
   const entries = [], observed = new Map()
@@ -56,8 +89,13 @@ export async function createReleaseArchive(root, file, paths) {
   return entries
 }
 
-/** Stage known binaries, inspect the whitelist, and pack one immutable npm tarball. */
-export async function packRelease(root, { windows, linux, output }) {
+/**
+ * Stage known binaries, inspect the whitelist, and pack one immutable npm tarball.
+ * Packing is the only step that writes `native/manifest.json`, and it writes a complete
+ * inventory: a declared-pending target cannot survive into a release candidate.
+ */
+export async function packRelease(root, options) {
+  const { output } = options
   const native = join(root, 'native')
   await mkdir(native, { recursive: true })
   if ((await lstat(native)).isSymbolicLink()) throw new Error('iroh_release_native_symlink')
@@ -67,7 +105,8 @@ export async function packRelease(root, { windows, linux, output }) {
   const execute = promisify(execFile)
   await execute(process.execPath, [npmCli, 'run', 'build:client'], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
   const manifest = { schemaVersion: 1, packageVersion: pkg.version, artifacts: {} }
-  for (const [target, source] of [['win32-x64', windows], ['linux-x64', linux]]) {
+  for (const [, target, key] of PACK_FLAGS.slice(0, -1)) {
+    const source = options[key]
     const metadata = await lstat(source)
     if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 64 || metadata.size > 128 * 1024 * 1024) throw new Error('iroh_release_binary_invalid')
     const bytes = await readFile(source)

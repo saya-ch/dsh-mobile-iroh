@@ -2,7 +2,7 @@ import { readFile, lstat } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { NATIVE_TARGETS, resolveNativeHostAt } from '../src/native-artifact.mjs'
+import { NATIVE_TARGETS, resolveNativeHostAt, validateNativeManifest } from '../src/native-artifact.mjs'
 
 /** Reject a publication plan that changes the experimental channel or installs executable hooks. */
 export function validateReleaseManifest(pkg) {
@@ -22,29 +22,43 @@ export function validateReleaseManifest(pkg) {
   return pkg
 }
 
+/** Every native executable must stay executable in the tarball; Windows has no such bit. */
+const nativeExecutables = Object.values(NATIVE_TARGETS).filter(file => !file.endsWith('.exe')).map(file => `native/${file}`)
+
 /** Packed contents must exactly match the reviewable whitelist plus npm's mandatory package manifest. */
 export function validatePackedFiles(files, pkg) {
   const actual = files.map(item => typeof item === 'string' ? item : item.path).sort()
   const expected = [...new Set([...pkg.files, 'package.json'])].sort()
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('iroh_release_packed_files_mismatch')
-  const linux = files.find(item => typeof item !== 'string' && item.path === `native/${NATIVE_TARGETS['linux-x64']}`)
-  if (linux && (!Number.isInteger(linux.mode) || (linux.mode & 0o111) === 0)) throw new Error('iroh_release_linux_mode_invalid')
+  for (const executable of nativeExecutables) {
+    const entry = files.find(item => typeof item !== 'string' && item.path === executable)
+    if (entry && (!Number.isInteger(entry.mode) || (entry.mode & 0o111) === 0)) throw new Error('iroh_release_executable_mode_invalid')
+  }
 }
 
-/** Require regular source files, both authenticated native targets, and real bundled license text. */
+/** Require regular source files, every authenticated native target, and real bundled license text. */
 export async function checkRelease(root) {
   const pkg = validateReleaseManifest(JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8')))
   const lock = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'))
   if (lock.version !== pkg.version || lock.packages?.['']?.version !== pkg.version
     || JSON.stringify(lock.packages[''].dependencies) !== JSON.stringify(pkg.dependencies)) throw new Error('iroh_release_npm_lock_mismatch')
+  const pending = []
+  const manifest = validateNativeManifest(JSON.parse(await readFile(resolve(root, 'native/manifest.json'), 'utf8')), pkg.version)
+  pending.push(...manifest.pendingTargets ?? [])
+  // A candidate may not be published while any supported platform is still only declared.
+  if (pending.length !== 0) throw new Error(`iroh_release_native_pending:${pending.join(',')}`)
   for (const file of pkg.files) {
     const stat = await lstat(resolve(root, file))
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) throw new Error(`iroh_release_file_invalid:${file}`)
   }
   for (const target of Object.keys(NATIVE_TARGETS)) {
     const [platform, arch] = target.split('-')
-    await resolveNativeHostAt(root, platform, arch)
+    try { await resolveNativeHostAt(root, platform, arch) } catch (error) {
+      if (error.code !== 'iroh_native_artifact_pending') throw error
+      pending.push(target)
+    }
   }
+  if (pending.length !== 0) throw new Error(`iroh_release_native_pending:${pending.join(',')}`)
   const notices = await readFile(resolve(root, 'native/THIRD_PARTY_NOTICES.txt'), 'utf8')
   const dependencies = JSON.parse(await readFile(resolve(root, 'native/dependencies.json'), 'utf8'))
   if (dependencies.lockfileSha256 !== createHash('sha256').update(await readFile(resolve(root, 'Cargo.lock'))).digest('hex')) {

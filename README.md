@@ -62,6 +62,10 @@ iroh 尝试加密直连，不能直连时使用可用中继，无需先准备公
 | --- | --- |
 | Windows x64 | `native/dsh-mobile-iroh-host-win32-x64.exe` |
 | Linux x64（glibc） | `native/dsh-mobile-iroh-host-linux-x64` |
+| macOS Intel（x64） | `native/dsh-mobile-iroh-host-darwin-x64` |
+| macOS Apple Silicon（arm64） | `native/dsh-mobile-iroh-host-darwin-arm64` |
+
+macOS 两个产物从 `0.1.0-alpha.2` 起才进入包内：`0.1.0-alpha.1` 只有 Windows 与 Linux 二进制，因此 macOS 在该版本上不可用。macOS 二进制必须由 macOS CI runner 原生构建（Rust 链接 Apple 目标需要 macOS SDK，Apple Silicon 还要求 arm64 Mach-O 带代码签名），不能在 Windows/Linux 上交叉编译产出。在二进制尚未产出期间，`native/manifest.json` 用 `pendingTargets` 明确标注缺失平台；运行时遇到该标记会以 `iroh_native_artifact_pending` 失败关闭，发布检查也会以 `iroh_release_native_pending` 拒绝打包，不会把“未产出”当成“已支持”。
 
 这些发行产物仍有消费者，不能因为代码已经整合就下架或替换。今后迁移组件发行源，需要先在主仓更新目录并完成相应验收；README 更新本身不改变现有下载、版本或校验策略。
 
@@ -80,6 +84,7 @@ iroh 尝试加密直连，不能直连时使用可用中继，无需先准备公
 
 - 原型验证基线：**官方 DSH Desktop／DSH 0.2.1-rc.2 + dsh-mobile 0.6.16**。
 - 电脑端为 Windows x64 或 Linux x64（glibc）；npm 包包含原生传输程序，不需要用户安装 Rust，不含 Alpine／musl 构建。
+- 从 `0.1.0-alpha.2` 起，同一个 npm 包另含 macOS 两个原生 host：Intel（`darwin-x64`）与 Apple Silicon（`darwin-arm64`）。该版本仍在准备中，二进制尚未产出前不要声称 macOS 可用，也不要把它当作已完成的 macOS 验收。
 - 独立 APK 支持 Android 10+，包含 arm64-v8a、x86_64，不支持 32 位设备。其正式签名与主 App 不同，不应相互覆盖。
 
 在上述原型环境中，官方 Desktop 可通过插件管理安装 `dsh-mobile-iroh@0.1.0-alpha.1`；DSH Web 可固定初版组合：

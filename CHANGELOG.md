@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.0-alpha.2 — unreleased (preparation)
+
+Adds macOS to the native Host distribution. **The two darwin binaries do not exist yet**: they must be produced by a macOS CI run, and no size or checksum is recorded until then. While they are missing, `native/manifest.json` declares them in `pendingTargets`, resolution fails closed with `iroh_native_artifact_pending`, and `npm run check:release` refuses the candidate with `iroh_release_native_pending`. Nothing in this entry is a macOS test result.
+
+### Desktop companion and distribution
+
+- Add the `darwin-x64` (Intel) and `darwin-arm64` (Apple Silicon) Host targets as `native/dsh-mobile-iroh-host-darwin-x64` and `native/dsh-mobile-iroh-host-darwin-arm64`, and add both to the published file whitelist.
+- Build both macOS Hosts natively in CI on `macos-15-intel` and `macos-15`. `macos-13` was retired on 2025-12-04 and the macOS 14 images on 2026-11-02, so the old Intel label cannot be used. Ad-hoc sign the Apple Silicon Host, then check Mach-O architecture, code signature and a real `id` invocation before uploading the artifact.
+- Pack all four native platforms into one tarball, and run the installed-package runtime check on macOS arm64 and Intel as well, so a macOS artifact cannot ship without its own macOS runtime result.
+- Require an explicit absolute artifact for every target (`--windows`, `--linux`, `--darwin-x64`, `--darwin-arm64`) when packing; a partially supplied set is rejected instead of silently shipping two platforms.
+- Verify Mach-O CPU type, `MH_EXECUTE` file type and the arm64 `LC_CODE_SIGNATURE` in the release gate, and preserve the executable bit for every POSIX native binary in the archive.
+
+### Validation
+
+- Unit coverage for declared-pending manifests, malformed pending sets, four-target packing arguments, Mach-O header acceptance/rejection and executable-mode checks; the darwin job also runs the Host and core Rust test suites and Clippy on macOS.
+- macOS source support existed already (the Unix private-storage adapter uses `O_SEARCH`), but it had no macOS runtime evidence. The new CI job is the first macOS build and run path; treat its first green run as the actual macOS result, not this changelog.
+
 ## 0.1.0-alpha.1 — 2026-10-23
 
 Initial independent testing release. The npm companion uses the `alpha` channel; Android has its own release-signed package and release tag.

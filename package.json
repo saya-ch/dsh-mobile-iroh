@@ -1,6 +1,6 @@
 {
   "name": "dsh-mobile-iroh",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Independent iroh transport and Android companion for DeepSeek Harness",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/saya-ch/dsh-mobile-iroh.git" },
@@ -17,6 +17,7 @@
     "integration/native-tls-manager.mjs", "integration/operator-owner.mjs", "integration/origin-contract.mjs", "integration/pairing-descriptor.mjs",
     "operator/cli.mjs", "operator/server.mjs", "operator/README.md", "operator/web/index.html", "operator/web/app.mjs", "operator/web/style.css",
     "native/manifest.json", "native/dsh-mobile-iroh-host-win32-x64.exe", "native/dsh-mobile-iroh-host-linux-x64",
+    "native/dsh-mobile-iroh-host-darwin-x64", "native/dsh-mobile-iroh-host-darwin-arm64",
     "native/THIRD_PARTY_NOTICES.txt", "native/dependencies.json",
     "LICENSE", "LICENSE.dsh-mobile", "LICENSE.dsh-tether", "NOTICE", "README.md", "README.en.md"
   ],

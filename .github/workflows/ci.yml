@@ -79,9 +79,73 @@ jobs:
           path: target/release/${{ matrix.executable }}
           if-no-files-found: error
 
+  # The Host sidecar is compiled natively on each runner, exactly like transport: Rust cannot link
+  # an Apple target without the macOS SDK, and Apple Silicon refuses to execute an arm64 Mach-O
+  # without a code signature. Do not replace these runners with a cross-build from Windows/Linux.
+  darwin:
+    name: macOS native host (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-13 was retired on 2025-12-04; macos-15-intel is the last Intel image Actions offers.
+          - os: macos-15-intel
+            target: darwin-x64
+            rust-target: x86_64-apple-darwin
+            arch: x64
+          - os: macos-15
+            target: darwin-arm64
+            rust-target: aarch64-apple-darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: ${{ matrix.rust-target }}
+          components: rustfmt, clippy
+      - run: npm ci --ignore-scripts
+      - name: Require a native macOS runner of the artifact's own architecture
+        run: |
+          set -euo pipefail
+          node --input-type=module -e "
+            if (process.platform !== 'darwin') throw new Error('native darwin build must run on macOS, got ' + process.platform)
+            if (process.arch !== '${{ matrix.arch }}') throw new Error('native darwin build arch mismatch, got ' + process.arch)
+            console.log('native darwin build host: ' + process.platform + '-' + process.arch)
+          "
+      - run: node --test src/native-artifact.test.mjs scripts/check-release.test.mjs scripts/pack-release.test.mjs
+      - run: npm run check:docs
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p dsh-mobile-iroh-host -p dsh-mobile-iroh-core
+      - run: cargo clippy --locked -p dsh-mobile-iroh-host --all-targets -- -D warnings
+      - name: Build optimized native distribution
+        run: cargo build --locked --release -p dsh-mobile-iroh-host --target ${{ matrix.rust-target }}
+      - name: Ad-hoc sign the Apple arm64 host so the kernel will start it
+        if: matrix.target == 'darwin-arm64'
+        run: codesign --force --sign - --timestamp=none "target/${{ matrix.rust-target }}/release/dsh-mobile-iroh-host"
+      - name: Inspect actual Mach-O architecture, signature and execution
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.rust-target }}/release/dsh-mobile-iroh-host"
+          file "$binary"
+          lipo -archs "$binary"
+          # Apple Silicon only starts a signed arm64 image; Intel needs no signature.
+          if [ "${{ matrix.target }}" = 'darwin-arm64' ]; then codesign --verify --strict "$binary"; codesign -d --verbose=2 "$binary"; fi
+          mkdir -m 0700 -p "$RUNNER_TEMP/darwin-host-probe"
+          "$binary" --lang en id --data-dir "$RUNNER_TEMP/darwin-host-probe" | grep -Eq '^[0-9a-f]{64}$'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-host-${{ matrix.target }}
+          path: target/${{ matrix.rust-target }}/release/dsh-mobile-iroh-host
+          if-no-files-found: error
+
   package:
     name: Inspect npm tarball
-    needs: transport
+    needs: [transport, darwin]
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -97,11 +161,13 @@ jobs:
           pattern: native-host-*
           path: native-inputs
       - run: npm run release:licenses
-      - name: Assemble both native platforms and inspect exact package contents
+      - name: Assemble all four native platforms and inspect exact package contents
         run: >-
           npm run release:pack --
           --windows "$GITHUB_WORKSPACE/native-inputs/native-host-win32-x64/dsh-mobile-iroh-host.exe"
           --linux "$GITHUB_WORKSPACE/native-inputs/native-host-linux-x64/dsh-mobile-iroh-host"
+          --darwin-x64 "$GITHUB_WORKSPACE/native-inputs/native-host-darwin-x64/dsh-mobile-iroh-host"
+          --darwin-arm64 "$GITHUB_WORKSPACE/native-inputs/native-host-darwin-arm64/dsh-mobile-iroh-host"
           --output "$RUNNER_TEMP/npm-candidate"
       - uses: actions/upload-artifact@v7
         with:
@@ -118,7 +184,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest]
+        os: [ubuntu-22.04, windows-latest, macos-15-intel, macos-15]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
